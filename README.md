@@ -89,6 +89,9 @@ Invalid configuration throws `ValueError` in the constructor. All four trading
 methods reject missing, null or non-object options with `ValueError`.
 When supplied, `options.config` must be a non-null object and its `network` must
 be a non-empty string; invalid values throw `ValueError`.
+For `buy` and `sell`, `options.config.externalTransactionId` optionally supplies a
+non-empty string of at most 256 characters. Invalid values throw `ValueError`.
+It is appended as `external-transaction-id` after the existing widget parameters.
 
 Production uses `https://api.dfx.swiss` and `https://app.dfx.swiss`.
 Sandbox uses `https://dev.api.dfx.swiss` and `https://dev.app.dfx.swiss`.
@@ -114,7 +117,7 @@ operations used.
 | `quoteSell(options)` | `FiatQuote` | None |
 | `buy(options)` | `{ buyUrl }` | Signing account |
 | `sell(options)` | `{ sellUrl }` | Signing account |
-| `getTransactionDetail(txId)` | `{ cryptoAsset, fiatCurrency, status }` | Authenticated session; signing account to obtain or renew it |
+| `getTransactionDetail(txId, options?)` | `{ cryptoAsset, fiatCurrency, status }` | Authenticated session; signing account to obtain or renew it |
 
 Both trade directions take `cryptoAsset`, `fiatCurrency`, and **exactly one** of
 `cryptoAmount` and `fiatAmount`. Inputs accept positive `bigint` or positive safe
@@ -186,7 +189,11 @@ selection argument; provider geography restrictions can still reject a request.
 
 ## Transaction states and timing
 
-`txId` is always passed as DFX `uid`, even if it looks numeric. Asset and fiat IDs
+`txId` defaults to DFX `uid`, even if it looks numeric. Pass
+`{ idType: 'externalTransactionId' }` to query `external-id` instead.
+The optional second argument must be an object; `idType` accepts only `'uid'`
+or `'externalTransactionId'` and defaults to `'uid'`. Invalid options throw `ValueError`.
+Asset and fiat IDs
 resolve against their respective unfiltered catalogs, including inactive entries;
 only matched rows are strictly validated. Unambiguous catalog names are a
 fallback; contradictory or unresolved metadata fails explicitly. Swap and Referral
@@ -206,6 +213,29 @@ A session token is kept only in private instance memory. Transaction details reu
 it and renew it once after HTTP 401 when a signing account is available. A second
 401 is returned as `ProviderError` with `UNAUTHORIZED`. Widget calls always obtain
 a fresh token. Supported lists and quotes need no signature; details do.
+
+### Tracking a wallet's order
+
+Assign and persist your own unique ID before opening the widget, then pass it to
+`buy` or `sell` and reuse it for status queries:
+
+```javascript
+const id = 'wallet-order-2026-09-24-001' // Create a unique ID for each order.
+const { buyUrl } = await dfx.buy({
+  cryptoAsset: 'ETH',
+  fiatCurrency: 'EUR',
+  fiatAmount: 10000n,
+  config: { externalTransactionId: id }
+})
+// Open buyUrl in the wallet's browser flow. Later:
+const detail = await dfx.getTransactionDetail(id, { idType: 'externalTransactionId' })
+```
+
+The same `config.externalTransactionId` applies to `sell`. DFX creates the
+transaction only after the user has retrieved the payment details in the widget
+and the payment has arrived. Queries throw `NoSuchElementError` until DFX has
+registered a transaction for this id. The wallet should treat this as “no order
+yet”, not as a failure. Receiving a widget URL does not establish an order.
 
 ## Errors
 
@@ -242,7 +272,8 @@ Other failures thrown by `getAddress()` or `sign()` become
 | --- | --- |
 | Detail endpoint 404 | `NoSuchElementError` |
 | Quote or detail 400 / 422 attributable to caller input | `ValueError` |
-| Supported-list, authentication, or unattributable 400 / 422 | `ProviderError(INTERNAL_SERVER_ERROR)` |
+| `POST /v1/auth` 400 / 401 | `ProviderError(UNAUTHORIZED)`; backend message preserved |
+| Supported-list or unattributable 400 / 422; authentication 422 | `ProviderError(INTERNAL_SERVER_ERROR)` |
 | 401 | `ProviderError(UNAUTHORIZED)` |
 | 403, including authentication geo-filter | `ProviderError(FORBIDDEN)`; provider message preserved |
 | 408 or abort deadline | `ProviderError(REQUEST_TIMEOUT)` |
@@ -265,6 +296,19 @@ same fallback.
 
 ## Known limitations
 
+- Sandbox checks on 2026-09-24 used the WDK wallet packages for EVM
+  (`@tetherto/wdk-wallet-evm`, seven chains), Tron (`@tetherto/wdk-wallet-tron`),
+  Solana (`@tetherto/wdk-wallet-solana`) and Spark (`@tetherto/wdk-wallet-spark`).
+  EVM and Tron completed login and opened a prefilled widget. Solana and Spark
+  exposed signature-format mismatches addressed here: Solana's 64-byte hex
+  signature is converted to Base58, and Spark's DER-hex signature to compact hex.
+  These conversions use only the constructor network and recognized formats;
+  other signatures pass through unchanged. A sandbox retest of these fixes is pending.
+- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) currently cannot log in.
+  DFX checks ERC-1271 smart-contract signatures only for already deployed
+  contracts, and the WDK account's owner signature is not a Safe signature.
+- Bitcoin accounts can authenticate, but BTC trading remains excluded while the
+  DFX API supplies no `decimals` for BTC.
 - The module excludes every asset without `decimals` from supported lists and
   rejects it in trades. At publication, the DFX API omits `decimals` for
   Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO; there is no crypto fallback table.
@@ -274,11 +318,6 @@ same fallback.
 - Request and widget amounts are limited to decimal values that `Number` carries
   without loss.
 - `networkCode` is `blockchain.toLowerCase()`; no chain aliases are translated.
-- For non-EVM authentication, the module sends the signature supplied by the
-  account. Whether it matches the format DFX verifies for that chain depends on
-  the wallet package. For EVM accounts, tests verify that signing the DFX challenge
-  produces a signature compatible with the backend's EVM verification procedure
-  (`verifyMessage` under EIP-191). End-to-end login is not part of the test suite.
 
 ## Security
 

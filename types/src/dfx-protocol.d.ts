@@ -30,10 +30,12 @@ export interface DfxProtocolConfig {
     timeout?: number;
 }
 
-/** Per-operation network selection. */
+/** Per-operation network selection and wallet transaction identifier. */
 export interface DfxTradeConfig {
     /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. */
     network?: string;
+    /** Wallet transaction identifier for buy/sell; non-empty, at most 256 characters. */
+    externalTransactionId?: string;
 }
 
 /** Purchase options with case-insensitive tickers/network and EVM checksum address equivalence. */
@@ -76,11 +78,13 @@ export default class DfxProtocol extends FiatProtocol {
      */
     quoteSell(options: DfxSellOptions): Promise<FiatQuote>;
     /**
-     * Retrieves by UID, renewing an expired session once. Resolves inactive catalog entries too.
+     * Retrieves by UID (default) or external transaction ID, renewing an expired session once.
+     * Resolves inactive catalog entries too. Invalid options or idType throw ValueError.
+     * Throws NoSuchElementError until DFX has registered a transaction for this id.
      * Requires authentication; only exact ProviderRequiredError and ProviderError account errors pass through.
      * Other account errors become ProviderError with cause; ValueError and NoSuchElementError describe the UID/API result only.
      */
-    getTransactionDetail(txId: string): Promise<FiatTransactionDetail>;
+    getTransactionDetail(txId: string, options?: { idType?: 'uid' | 'externalTransactionId' }): Promise<FiatTransactionDetail>;
     /** Lists assets tradable in either direction with known decimals. */
     getSupportedCryptoAssets(): Promise<SupportedCryptoAsset[]>;
     /** Lists currencies tradable in either direction with known ISO minor units. */

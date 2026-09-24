@@ -630,9 +630,9 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     await failure(protocol.getTransactionDetail('123'), ValueError, 'Invalid UID')
   })
 
-  test.each([400, 422])('auth HTTP %s is not misclassified as a caller amount error', async status => {
+  test.each([[400, 'UNAUTHORIZED'], [401, 'UNAUTHORIZED'], [422, 'INTERNAL_SERVER_ERROR']])('auth HTTP %s preserves the backend rejection', async (status, reason) => {
     const { protocol } = setup({ network: 'ethereum' }, { 'POST /v1/auth': response({ message: 'Invalid signature format' }, status) })
-    await failure(protocol.buy(OPTIONS), ProviderError, 'Invalid signature format', 'INTERNAL_SERVER_ERROR')
+    await failure(protocol.buy(OPTIONS), ProviderError, 'Invalid signature format', reason)
   })
 
   test('preserves the geo-filter message from authentication', async () => {
@@ -1016,4 +1016,82 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     await failure(protocol.quoteBuy(OPTIONS), ProviderError, message, 'INTERNAL_SERVER_ERROR')
   })
 
+})
+
+describe('sandbox authentication formats and wallet transaction identifiers', () => {
+  const solana = '00'.repeat(62) + '0d24'
+  const der = '304402210080' + '00'.repeat(31) + '021f01' + '00'.repeat(30)
+  const compact = '80' + '00'.repeat(31) + '0001' + '00'.repeat(30)
+
+  test.each([
+    ['solana', solana, '1'.repeat(62) + '211'],
+    ['spark', der, compact], ['SoLaNa', solana, '1'.repeat(62) + '211'],
+    ['ethereum', solana, solana], ['tron', der, der],
+    [undefined, solana, solana], ['spark', compact, compact]
+  ])('POST auth uses only constructor network %s for normalization %#', async (network, signature, expected) => {
+    const { protocol, account, fetch } = setup({ network })
+    account.sign.mockResolvedValue(signature)
+    await protocol.getTransactionDetail('123')
+    const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'POST')[1].body)
+    expect(body.signature).toBe(expected)
+    expect(account.sign).toHaveBeenCalledWith('[dev]_Sign this exact message')
+  })
+
+  test.each(['buy', 'sell'].flatMap(method => ['wallet /?&=+#', 'x'.repeat(256)].map(id => [method, id])))('%s appends an encoded external ID %#', async (method, id) => {
+    const { protocol } = setup({ network: 'ethereum' })
+    const result = await protocol[method]({ ...OPTIONS, config: { externalTransactionId: id } })
+    const url = new URL(result[`${method}Url`])
+    expect([...url.searchParams.keys()]).toEqual(['session', 'lang', 'asset-in', 'asset-out', 'blockchain', method === 'buy' ? 'amount-in' : 'amount-out', 'external-transaction-id'])
+    expect(url.searchParams.get('external-transaction-id')).toBe(id)
+    expect(url.search).toContain(`external-transaction-id=${new URLSearchParams({ id }).toString().slice(3)}`)
+  })
+
+  test.each(['buy', 'sell'].flatMap(method => [null, false, 1, '', '  ', {}, [], 'x'.repeat(257)].map(id => [method, id])))('%s rejects invalid external ID before HTTP %#', async (method, id) => {
+    const { protocol, fetch } = setup({ network: 'ethereum' })
+    await expect(protocol[method]({ ...OPTIONS, config: { externalTransactionId: id } })).rejects.toBeInstanceOf(ValueError)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test.each(['buy', 'sell'])('%s omits the optional external ID', async method => {
+    const { protocol } = setup({ network: 'ethereum' })
+    const result = await protocol[method]({ ...OPTIONS, config: {} })
+    expect(new URL(result[`${method}Url`]).searchParams.has('external-transaction-id')).toBe(false)
+  })
+
+  test.each([undefined, {}, { idType: undefined }, { idType: 'uid' }])('detail defaults to UID %#', async options => {
+    const { protocol, fetch } = setup()
+    await protocol.getTransactionDetail('123', options)
+    request(fetch, '/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-session')
+  })
+
+  test.each([null, false, 1, 'options', [], () => {}, { idType: null }, { idType: '' }, { idType: 'external-id' }])('rejects invalid detail options before HTTP %#', async options => {
+    const { protocol, fetch } = setup()
+    await expect(protocol.getTransactionDetail('123', options)).rejects.toBeInstanceOf(ValueError)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('queries an encoded external ID and keeps it on session renewal', async () => {
+    let calls = 0
+    const path = '/v1/transaction/detail/single?external-id=wallet%2F%3F%26%3D%2B%23'
+    const { protocol, fetch, account } = setup({}, {
+      [`GET ${path}`]: () => ++calls === 1 ? response({}, 401) : response(DUMMY_DETAIL)
+    })
+    expect(await protocol.getTransactionDetail('wallet/?&=+#', { idType: 'externalTransactionId' })).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith(path))).toHaveLength(2)
+    expect(account.sign).toHaveBeenCalledTimes(2)
+  })
+
+  test('external ID without a registered order remains NoSuchElementError', async () => {
+    const { protocol } = setup({}, {
+      'GET /v1/transaction/detail/single?external-id=pending': response({ message: 'Transaction not found' }, 404)
+    })
+    await failure(protocol.getTransactionDetail('pending', { idType: 'externalTransactionId' }), NoSuchElementError, 'Transaction not found')
+  })
+
+  test('challenge HTTP 400 is not treated as a rejected POST login', async () => {
+    const { protocol } = setup({}, {
+      [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: 'Invalid signature' }, 400)
+    })
+    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Invalid signature', 'INTERNAL_SERVER_ERROR')
+  })
 })

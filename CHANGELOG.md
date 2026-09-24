@@ -8,6 +8,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Optional wallet-assigned `externalTransactionId` for buy/sell widget URLs and
+  transaction lookup via `getTransactionDetail(id, { idType: 'externalTransactionId' })`.
+- Order-tracking timing and sandbox account compatibility documentation, including
+  ERC-4337 authentication and Bitcoin trading limitations.
 - All eight WDK fiat methods for DFX production and sandbox environments.
 - Indicative buy and sell quotes with lossless response parsing and exact base units.
 - Authenticated widget URLs with account network binding and both amount modes.
@@ -33,6 +37,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Normalize recognized Solana hex signatures to Base58 and Spark DER-hex signatures
+  to compact hex for authentication, without accessing keys or adding dependencies.
+- Map authentication POST HTTP 400/401 to `UNAUTHORIZED`, preserving the backend message.
 - Bind injected and ambient fetch to the global receiver.
 - Reject invalid configuration, timeout, string options and trade options with ValueError.
 - Reject timeouts above 2147483647 ms and invalid per-operation config objects/networks.

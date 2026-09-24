@@ -7,6 +7,7 @@ import {
 } from '@tetherto/wdk-wallet/protocols'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxClient from './dfx-client.js'
+import { normalizeSignature } from './signature.js'
 import { decimal, displayAmount, divideAmounts, minorUnits, positiveAmount, unexpected } from './amounts.js'
 import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './constants.js'
 
@@ -36,10 +37,11 @@ import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './const
  */
 
 /**
- * Per-operation network selection.
+ * Per-operation network selection and wallet transaction identifier.
  *
  * @typedef {Object} DfxTradeConfig
  * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network.
+ * @property {string} [externalTransactionId] - Wallet transaction identifier for buy/sell; non-empty, at most 256 characters.
  */
 
 /**
@@ -199,6 +201,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
    * @throws {ValueError} If recipient differs from the account address.
+   * @throws {ValueError} If externalTransactionId is empty, not a string, or exceeds 256 characters.
    * @throws {ProviderError} If authentication or the API request fails.
    * @throws {ProviderRequiredError} If the account requires a provider.
    * @throws {BuyError} If the account reports a purchase failure.
@@ -232,6 +235,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
    * @throws {ValueError} If refundAddress differs from the account address.
+   * @throws {ValueError} If externalTransactionId is empty, not a string, or exceeds 256 characters.
    * @throws {ProviderError} If authentication or the API request fails.
    * @throws {ProviderRequiredError} If the account requires a provider.
    * @throws {SellError} If the account reports a sale failure.
@@ -254,22 +258,26 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /**
-   * Retrieves a fiat transaction by its DFX UID, renewing an expired session once.
+   * Retrieves a fiat transaction by UID or external ID, renewing an expired session once.
    * Resolves inactive catalog rows too, validating only the matched rows.
    * Only exact ProviderRequiredError and ProviderError account errors pass through;
    * all other account failures become ProviderError with the original cause.
    *
-   * @param {string} txId - DFX transaction UID, including numeric-looking UIDs.
+   * @param {string} txId - DFX transaction UID or wallet-assigned external transaction ID.
+   * @param {{ idType?: 'uid' | 'externalTransactionId' }} [options] - Identifier type; defaults to uid.
    * @returns {Promise<FiatTransactionDetail>} Normalized transaction status and asset codes.
-   * @throws {ValueError} If the UID is empty or rejected by DFX.
-   * @throws {NoSuchElementError} If the UID is absent or identifies a Swap or Referral.
+   * @throws {ValueError} If the identifier or options are invalid, or the identifier is rejected by DFX.
+   * @throws {NoSuchElementError} Until DFX has registered a transaction for this id, or for a Swap or Referral.
    * @throws {ProviderRequiredError} If the signing account requires a provider.
    * @throws {ProviderError} If authentication fails or the response cannot be resolved.
    */
-  async getTransactionDetail (txId) {
+  async getTransactionDetail (txId, options = {}) {
+    optionsObject(options, 'options')
+    const idType = options.idType === undefined ? 'uid' : options.idType
+    if (idType !== 'uid' && idType !== 'externalTransactionId') throw new ValueError('idType must be uid or externalTransactionId')
     if (typeof txId !== 'string' || txId.trim() === '') throw new ValueError('txId must be a non-empty UID')
     if (!this.#token) await this._authenticate('detail')
-    const path = `/v1/transaction/detail/single?${new URLSearchParams({ uid: txId })}`
+    const path = `/v1/transaction/detail/single?${new URLSearchParams({ [idType === 'uid' ? 'uid' : 'external-id']: txId })}`
     let data
     try {
       data = await this._client._request(path, { token: this.#token, input: true, detail: true })
@@ -367,7 +375,7 @@ export default class DfxProtocol extends FiatProtocol {
     textField(signature)
     const body = {
       address: accountAddress,
-      signature,
+      signature: normalizeSignature(this._config.network, signature),
       wallet: this._config.wallet,
       blockchain: BLOCKCHAINS.find(chain => chain.toLowerCase() === this._config.network),
       key: this._config.publicKey
@@ -395,6 +403,8 @@ export default class DfxProtocol extends FiatProtocol {
     optionalString(options.config?.network, 'network')
     const network = options.config?.network?.toLowerCase() ?? this._config.network
     if (widget) {
+      optionalString(options.config?.externalTransactionId, 'externalTransactionId')
+      if (options.config?.externalTransactionId?.length > 256) throw new ValueError('externalTransactionId must not exceed 256 characters')
       if (!this._config.network) throw new ValueError('network must be configured in the constructor to bind the account to a chain')
       if (network !== this._config.network) throw new ValueError('network must match the account network configured in the constructor')
     }
@@ -474,6 +484,7 @@ export default class DfxProtocol extends FiatProtocol {
     url.searchParams.set('asset-out', direction === 'buy' ? asset.name : currency.name)
     url.searchParams.set('blockchain', asset.blockchain)
     url.searchParams.set(source ? 'amount-in' : 'amount-out', amount)
+    if (options.config?.externalTransactionId !== undefined) url.searchParams.set('external-transaction-id', options.config.externalTransactionId)
     return url.toString()
   }
 }

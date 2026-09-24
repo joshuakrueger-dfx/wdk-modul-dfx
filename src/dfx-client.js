@@ -54,6 +54,9 @@ export default class DfxClient {
       }
       if (!response.ok) {
         const message = typeof data?.message === 'string' ? data.message : `DFX HTTP ${response.status}`
+        if (path === '/v1/auth' && method === 'POST' && (response.status === 400 || response.status === 401)) {
+          throw new ProviderError(message, { reason: ProviderErrorReason.UNAUTHORIZED })
+        }
         if (response.status === 404 && detail) throw new NoSuchElementError(message)
         if ((response.status === 400 || response.status === 422) && input && attributableInput(data, detail)) throw new ValueError(message)
         const reason = {
