@@ -32,7 +32,7 @@ import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './const
  * @property {string} [publicKey] - Public key sent as key during authentication. No default.
  * @property {string} [language] - Widget language code. Defaults to en.
  * @property {typeof fetch} [fetch] - HTTP implementation called with globalThis as receiver. Defaults to globalThis.fetch.
- * @property {number} [timeout] - Finite positive HTTP request deadline in milliseconds. Defaults to 30000.
+ * @property {number} [timeout] - Finite positive HTTP request deadline in milliseconds, at most 2147483647. Defaults to 30000.
  */
 
 /**
@@ -104,7 +104,8 @@ function identifier (value) {
 }
 
 function fiatDecimals (currency) {
-  return Object.hasOwn(FIAT_DECIMALS, currency.name) ? FIAT_DECIMALS[currency.name] : undefined
+  const code = currency.name.toUpperCase()
+  return Object.hasOwn(FIAT_DECIMALS, code) ? FIAT_DECIMALS[code] : undefined
 }
 
 function catalogRow (row, kind) {
@@ -112,7 +113,7 @@ function catalogRow (row, kind) {
   textField(row.name)
   if (typeof row.buyable !== 'boolean' || typeof row.sellable !== 'boolean') throw unexpected()
   if (kind === 'asset') {
-    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(textField(row.blockchain))) throw unexpected()
+    if (/[\s\p{Cc}]/u.test(textField(row.blockchain))) throw unexpected()
     if (row.description != null) textField(row.description)
     if (hasDecimals(row)) assetDecimals(row)
   }
@@ -172,6 +173,7 @@ export default class DfxProtocol extends FiatProtocol {
     if (config.timeout !== undefined && (typeof config.timeout !== 'number' || !Number.isFinite(config.timeout) || config.timeout <= 0)) {
       throw new ValueError('timeout must be a finite number greater than zero')
     }
+    if (config.timeout > 2147483647) throw new ValueError('timeout must not exceed 2147483647 milliseconds')
     for (const field of ['network', 'wallet', 'publicKey', 'language']) optionalString(config[field], field)
     const environment = config.environment ?? 'production'
     if (environment !== 'production' && environment !== 'sandbox') {
@@ -386,6 +388,7 @@ export default class DfxProtocol extends FiatProtocol {
   /** @private */
   async _trade (direction, options, widget = false) {
     optionsObject(options, 'options')
+    if (options.config !== undefined) optionsObject(options.config, 'options.config')
     const isFiat = options.fiatAmount !== undefined
     if (isFiat === (options.cryptoAmount !== undefined)) throw new ValueError('Exactly one of fiatAmount and cryptoAmount must be supplied')
     const amount = positiveAmount(isFiat ? options.fiatAmount : options.cryptoAmount)
@@ -397,13 +400,21 @@ export default class DfxProtocol extends FiatProtocol {
     }
     const [assets, currencies] = await Promise.all([this._catalog('asset'), this._catalog('fiat')])
     const capability = direction === 'buy' ? 'buyable' : 'sellable'
-    const matches = assets.filter(asset => typeof options.cryptoAsset === 'string' && asset.name.toLowerCase() === options.cryptoAsset.toLowerCase() && asset[capability] &&
+    let matches = assets.filter(asset => typeof options.cryptoAsset === 'string' && asset.name.toLowerCase() === options.cryptoAsset.toLowerCase() && asset[capability] &&
       (network === undefined || asset.blockchain.toLowerCase() === network))
     if (!matches.length) throw new ValueError(`Unsupported ${direction} asset or network: ${options.cryptoAsset}`)
+    if (new Set(matches.map(asset => asset.blockchain.toLowerCase())).size === 1) {
+      const exact = matches.filter(asset => asset.name === options.cryptoAsset)
+      if (exact.length === 1) matches = exact
+    }
     if (matches.length > 1) throw new ValueError(`Ambiguous asset ${options.cryptoAsset}; configure network: ${matches.map(asset => asset.blockchain.toLowerCase()).join(', ')}`)
     const asset = matches[0]
     if (!hasDecimals(asset)) throw new ValueError(`Missing decimals for ${asset.blockchain}/${asset.name}`)
-    const currency = currencies.find(currency => typeof options.fiatCurrency === 'string' && currency.name.toLowerCase() === options.fiatCurrency.toLowerCase() && currency[capability])
+    let fiatMatches = currencies.filter(currency => typeof options.fiatCurrency === 'string' && currency.name.toLowerCase() === options.fiatCurrency.toLowerCase() && currency[capability])
+    const exactFiat = fiatMatches.filter(currency => currency.name === options.fiatCurrency)
+    if (exactFiat.length === 1) fiatMatches = exactFiat
+    if (fiatMatches.length > 1) throw new ValueError(`Ambiguous fiat currency: ${options.fiatCurrency}`)
+    const currency = fiatMatches[0]
     if (!currency || fiatDecimals(currency) === undefined) throw new ValueError(`Unsupported ${direction} fiat currency: ${options.fiatCurrency}`)
     const source = direction === 'buy' ? isFiat : !isFiat
     return {

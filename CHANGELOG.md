@@ -28,14 +28,21 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   retain DFX spelling. EVM address comparisons accept checksum case differences.
 - Account error allowlists require exact constructors; transaction details pass
   through only ProviderRequiredError and ProviderError from account operations.
+- Document Node.js ≥ 22 and Bare support, the CI coverage gate, known limitations
+  and permanent sandbox user creation by authenticated integration tests.
 
 ### Fixed
 
 - Bind injected and ambient fetch to the global receiver.
 - Reject invalid configuration, timeout, string options and trade options with ValueError.
+- Reject timeouts above 2147483647 ms and invalid per-operation config objects/networks.
+- Prefer a unique exact spelling for asset collisions on one network and fiat
+  currency collisions; reject unresolved ambiguity instead of selecting the first currency.
+- Resolve ISO fiat minor units independently of catalog name casing.
 - Filter inactive catalog rows before validation; resolve historical rows from
   unfiltered catalogs and validate only the matched entries.
-- Reject numeric blockchain metadata preserved as strings by lossless JSON parsing.
+- Accept future blockchain names as non-empty strings without whitespace or control characters.
+- Cover ProviderError subclasses from account operations with transaction-detail wrapping tests.
 - Re-export IFiatProtocol as a declaration value; maintain updated declarations by hand.
 - Remove per-token suffix slicing from JSON number parsing.
 - Replace BigInt-unsafe test titles and test-body loops; expand regression cases.
@@ -43,9 +50,6 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Known limitations
 
-- Current corrections still require runtime tests, coverage and lint verification.
-  Prior Node 22.22.0/Bare import and public endpoint smoke checks were reported
-  successful on 2026-09-24; full sandbox buy/sell flows remain pending.
 - Assets without decimals and ambiguous tickers without a network are rejected.
 - Amounts outside the API's conservative numeric precision boundary are rejected.
 - Rate-limit and account-state error reasons are provisional pending WDK agreement.

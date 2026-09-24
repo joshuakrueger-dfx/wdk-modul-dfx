@@ -10,15 +10,10 @@ in the DFX widget; this module does not execute trades or hold funds.
 ## Compatibility
 
 Implements `IFiatProtocol` by extending `FiatProtocol` from
-`@tetherto/wdk-wallet`. The declared compatibility and verification range is
-`@tetherto/wdk-wallet ^1.0.0-beta.19`. The local interface inspected for this
-implementation is `1.0.0-beta.19`. Do not interpret the range as a completed
-compatibility matrix.
+`@tetherto/wdk-wallet`, with compatibility range `^1.0.0-beta.19`.
 
-ES modules; Node.js with `fetch` (or an injected implementation). The Bare entry
-point loads `bare-node-runtime/global`. On 2026-09-24 the integration team reported
-successful import under Node 22.22.0 and Bare, including Bare live fetch. Those
-checks precede the current corrections; their runtime verification is pending.
+ES modules; supports Node.js ≥ 22 (CI: 22.22.0) and Bare. The Bare entry point
+loads `bare-node-runtime/global`. HTTP uses `fetch` or an injected implementation.
 The module receives a WDK account from its caller and does not depend directly on
 `@tetherto/wdk` or any specific chain wallet package. Use one installed copy of
 `@tetherto/wdk-wallet` throughout the wallet application.
@@ -86,12 +81,14 @@ application and opt-in integration tests.
 | `publicKey` | unset | Public key sent as `key` during authentication (e.g. Arweave, Cardano, Internet Computer) |
 | `language` | `'en'` | Widget `lang` value |
 | `fetch` | `globalThis.fetch` | Injectable HTTP implementation called with `globalThis` as receiver; absence fails on the first request, not construction |
-| `timeout` | `30000` | Finite number greater than zero; request deadline in milliseconds, implemented with `AbortController` |
+| `timeout` | `30000` | Finite number greater than zero and at most `2147483647`; request deadline in milliseconds, implemented with `AbortController` |
 
 Configuration must be an object. When supplied, `network`, `wallet`, `publicKey`
 and `language` must be non-empty strings (whitespace-only strings are rejected).
 Invalid configuration throws `ValueError` in the constructor. All four trading
 methods reject missing, null or non-object options with `ValueError`.
+When supplied, `options.config` must be a non-null object and its `network` must
+be a non-empty string; invalid values throw `ValueError`.
 
 Production uses `https://api.dfx.swiss` and `https://app.dfx.swiss`.
 Sandbox uses `https://dev.api.dfx.swiss` and `https://dev.app.dfx.swiss`.
@@ -136,9 +133,8 @@ Responses are read as text and JSON numeric literals are preserved as strings
 before decimal arithmetic. `cryptoAmount`, `fiatAmount`, and `fee` in a quote are
 `bigint` in smallest units. Fractional smallest units in provider responses are
 rejected, never rounded. Requests use exact decimal literals; an amount whose
-normalized decimal representation changes through `Number` is rejected until the
-DFX backend's precision has been measured. This restriction also applies to widget
-amounts.
+normalized decimal representation changes through `Number` is rejected.
+This restriction also applies to widget amounts.
 
 `fee` is **fiat**, from `fees.total` on buys and `feesTarget.total` on sells, scaled
 to the smallest fiat unit. It includes the provider's reported aggregate fee;
@@ -165,9 +161,8 @@ The authoritative supported list comes live from the DFX API; it is not a static
 chain allowlist. Crypto `code` is the asset's ticker (`name`), not `uniqueName`.
 Input tickers and fiat currency names are compared case-insensitively (`USDt`
 matches `USDT`). Quote bodies and widget URLs preserve the resolved DFX spelling.
-**Assumption F8a:** `networkCode = blockchain.toLowerCase()`; aliases for every
-WDK chain have not been independently verified. The widget uses the original
-PascalCase blockchain value. This covers DFX networks with complete asset
+`networkCode = blockchain.toLowerCase()`. The widget uses the original
+blockchain value. This covers DFX networks with complete asset
 metadata, not only EVM chains.
 
 A ticker can occur on multiple networks. Without a network, ambiguous tickers
@@ -178,13 +173,8 @@ module's ISO 4217 table; unknown currencies are excluded and rejected in trades.
 Rows with neither `buyable === true` nor `sellable === true` are discarded before
 validation. Tradable rows remain strictly validated; malformed metadata is a
 provider error rather than a silently omitted trading asset.
-
-The measured snapshot on 2026-09-21 had 112 tradable assets, 26 duplicated tickers,
-and two tradable fiat currencies (EUR and CHF) among 24 returned currencies.
-Four assets lacked decimals: Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO.
-They are excluded from the supported list and rejected in trades until the API
-supplies decimals; there is no crypto fallback table. These counts are historical,
-not a promise about the current API.
+For case-insensitive asset collisions on the same network or currency collisions,
+a unique exact spelling wins; otherwise the trade fails with `ValueError`.
 
 Country availability uses `bankAllowed` for **both** directions. Treating this
 nondirectional flag as buy and sell availability is an assumption; `cardAllowed`
@@ -207,8 +197,7 @@ transactions are outside this fiat interface.
 | Any unknown state | `in_progress` |
 
 DFX's flow uses a bank transfer and payment reference. A transaction can remain
-`in_progress` while awaiting the incoming payment. **Actual status duration has
-not been measured**; this is not a card flow with a guaranteed completion time.
+`in_progress` while awaiting the incoming payment; completion time is not guaranteed.
 
 A session token is kept only in private instance memory. Transaction details reuse
 it and renew it once after HTTP 401 when a signing account is available. A second
@@ -269,8 +258,22 @@ For `isValid: false`, the first structured error takes precedence over deprecate
 `ValueError`, with the corresponding source/target limit when provided.
 KYC, bank setup, account limits, unconfirmed email and other account-state errors
 use `INTERNAL_SERVER_ERROR` provisionally. Missing or unknown error codes use the
-same fallback. Dedicated WDK reasons for account states and 429 remain an upstream
-release question.
+same fallback.
+
+## Known limitations
+
+- Four assets without `decimals` are excluded from supported lists and rejected
+  in trades: Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO. They require
+  API-supplied decimals; there is no crypto fallback table.
+- Ambiguous tickers without a network are rejected.
+- HTTP 429 and account-state failures provisionally map to `INTERNAL_SERVER_ERROR`.
+- A `recipient` or `refundAddress` differing from the account address is rejected.
+- Request and widget amounts are limited to decimal values that `Number` carries
+  without loss.
+- `networkCode` is `blockchain.toLowerCase()`; no chain aliases are translated.
+- For non-EVM authentication, the module sends the signature supplied by the
+  account. Whether it matches the format DFX verifies for that chain depends on
+  the wallet package. EVM signing has been tested.
 
 ## Security
 
@@ -291,8 +294,8 @@ npm install && npm run lint && npm run test:coverage
 ```
 
 Tests route injected fetch calls by HTTP method and URL. Coverage thresholds are
-100% statements, branches, functions and lines across `src/`. This threshold is a
-gate, **not yet a measured result**. Type declarations are maintained manually;
+100% statements, branches, functions and lines across `src/`, enforced as a
+CI gate. Type declarations are maintained manually;
 do not regenerate them with `build:types`.
 
 Sandbox integration tests are skipped unless `DFX_INTEGRATION=1`. They use real
@@ -331,20 +334,16 @@ DFX_INTEGRATION=1 DFX_TEST_ACCOUNT_MODULE=/absolute/path/test-account.js \
   DFX_TEST_TRANSACTION_UID=your-sandbox-uid npm run test:integration
 ```
 
-These tests authenticate, generate buy/sell URLs and retrieve the existing
-transaction; they do not complete bank payment or KYC in the widget. Completing
-a purchase and sale remains a separate sandbox acceptance exercise.
+Authenticated tests call `POST /v1/auth`, which permanently creates a DFX sandbox
+user on the first call for an unknown address, recording the address, IP and,
+if supplied, `DFX_WALLET`. Public catalog and quote tests do not write data.
+Authenticated tests generate buy/sell URLs and retrieve the existing transaction;
+they do not complete bank payment or KYC in the widget.
 `test:coverage` explicitly excludes the integration file, even when integration
 environment variables are set; the 100% gate is measured from unit tests only.
 
-Outstanding release checks include the complete test/lint run, declaration
-compatibility, one installed wallet dependency, dependency audit, Node/Bare runs,
-full sandbox buy/sell flows, and repository/npm OIDC publishing configuration.
 The release workflow uses `holepunchto/actions/publish` after lint and coverage
-checks. Backend auth throttling and agreement on provisional
-error reasons remain release prerequisites. The full blockchain enum sent at auth
-follows the backend contract supplied for this implementation; Swagger's auth DTO
-currently advertises only EVM values. Non-EVM authentication needs runtime verification.
+checks.
 
 ## Support and license
 

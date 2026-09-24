@@ -26,7 +26,7 @@ export interface DfxProtocolConfig {
     language?: string;
     /** HTTP implementation, called with globalThis as receiver. Defaults to globalThis.fetch. */
     fetch?: typeof fetch;
-    /** Finite positive HTTP request deadline in milliseconds. Defaults to 30000. */
+    /** Finite positive HTTP request deadline in milliseconds, at most 2147483647. Defaults to 30000. */
     timeout?: number;
 }
 

@@ -100,6 +100,21 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     expect(() => new DfxProtocol(undefined, { timeout })).toThrow(new ValueError('timeout must be a finite number greater than zero'))
   })
 
+  test.each([2147483648, Number.MAX_VALUE])('rejects timer overflow %s', timeout => {
+    expect(() => new DfxProtocol(undefined, { timeout })).toThrow(new ValueError('timeout must not exceed 2147483647 milliseconds'))
+  })
+
+  test('accepts the maximum timer delay without clamping it', async () => {
+    jest.useFakeTimers()
+    const timer = jest.spyOn(globalThis, 'setTimeout')
+    const { protocol } = setup({ timeout: 2147483647 })
+    expect(await protocol.getSupportedCountries()).toEqual([
+      { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
+      { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
+    ])
+    expect(timer).toHaveBeenCalledWith(expect.any(Function), 2147483647)
+  })
+
   test.each(['network', 'wallet', 'publicKey', 'language'].flatMap(field =>
     [null, false, 1, '', '  ', {}, []].map(value => [field, value])
   ))('rejects invalid constructor string %s case %#', (field, value) => {
@@ -112,9 +127,102 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     await failure(new DfxProtocol()[method](options), ValueError, 'options must be an object')
   })
 
-  test.each([null, 1, ''])('rejects invalid per-operation networks %#', async network => {
-    const { protocol } = setup()
-    await failure(protocol.quoteBuy({ ...OPTIONS, config: { network } }), ValueError, 'network must be a non-empty string')
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    [null, false, 1, 'config', [], () => {}].map(config => [method, config])
+  ))('%s rejects invalid per-operation config %#', async (method, config) => {
+    const { protocol, fetch } = setup({ network: 'ethereum' })
+    await failure(protocol[method]({ ...OPTIONS, config }), ValueError, 'options.config must be an object')
+    expect(fetch.mock.calls).toEqual([])
+  })
+
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    [null, false, 1, '', '  ', {}, []].map(network => [method, network])
+  ))('%s rejects invalid per-operation networks %#', async (method, network) => {
+    const { protocol, fetch } = setup({ network: 'ethereum' })
+    await failure(protocol[method]({ ...OPTIONS, config: { network } }), ValueError, 'network must be a non-empty string')
+    expect(fetch.mock.calls).toEqual([])
+  })
+
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    ['ETH', 'eth'].map(name => [method, name])
+  ))('%s prefers the unique exact asset spelling %s on one network', async (method, name) => {
+    const { protocol, fetch } = setup({ network: 'ethereum' }, {
+      'GET /v1/asset': response([
+        { ...DUMMY_ASSETS[0], id: 8, name: 'eth' }, DUMMY_ASSETS[0]
+      ])
+    })
+    const result = await protocol[method]({ ...OPTIONS, cryptoAsset: name, config: {} })
+    if (method.startsWith('quote')) {
+      const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
+      expect(body.asset).toEqual({ id: name === 'ETH' ? 1 : 8 })
+    } else {
+      const url = new URL(result[`${method}Url`])
+      expect(url.searchParams.get(method === 'buy' ? 'asset-out' : 'asset-in')).toBe(name)
+    }
+  })
+
+  test.each(['quoteBuy', 'quoteSell'].flatMap(method => [
+    ['Eth', ['ETH', 'eth'], ['Ethereum', 'Ethereum']],
+    ['ETH', ['ETH', 'ETH'], ['Ethereum', 'Ethereum']],
+    ['ETH', ['ETH', 'eth'], ['Ethereum', 'Tron']]
+  ].map(values => [method, ...values])))('%s rejects unresolved asset collisions %#', async (method, name, names, chains) => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response(names.map((name, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name, blockchain: chains[index] })))
+    })
+    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: name }), ValueError,
+      `Ambiguous asset ${name}; configure network: ${chains.map(chain => chain.toLowerCase()).join(', ')}`)
+  })
+
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    ['EUR', 'eur'].map(name => [method, name])
+  ))('%s prefers the unique exact fiat spelling %s', async (method, name) => {
+    const { protocol, fetch } = setup({ network: 'ethereum' }, {
+      'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], id: 18, name: 'eur' }, DUMMY_FIAT[0]])
+    })
+    const result = await protocol[method]({ ...OPTIONS, fiatCurrency: name })
+    if (method.startsWith('quote')) {
+      const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
+      expect(body.currency).toEqual({ name })
+      expect(result.fiatAmount).toBe(10000n)
+    } else {
+      const url = new URL(result[`${method}Url`])
+      expect(url.searchParams.get(method === 'buy' ? 'asset-in' : 'asset-out')).toBe(name)
+      expect(url.searchParams.get(method === 'buy' ? 'amount-in' : 'amount-out')).toBe('100')
+    }
+  })
+
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method => [
+    ['Eur', ['EUR', 'eur']], ['EUR', ['EUR', 'EUR']]
+  ].map(values => [method, ...values])))('%s rejects unresolved fiat collisions %#', async (method, name, names) => {
+    const { protocol } = setup({ network: 'ethereum' }, {
+      'GET /v1/fiat': response(names.map((name, index) => ({ ...DUMMY_FIAT[0], id: index + 11, name })))
+    })
+    await failure(protocol[method]({ ...OPTIONS, fiatCurrency: name }), ValueError, `Ambiguous fiat currency: ${name}`)
+  })
+
+  test.each(['NewChain2', 'New-Chain2/?&'])('lists a future blockchain value %s', async blockchain => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain }])
+    })
+    expect(await protocol.getSupportedCryptoAssets()).toEqual([
+      { code: 'ETH', networkCode: blockchain.toLowerCase(), decimals: 18, name: 'Ether' }
+    ])
+  })
+
+  test('encodes a future blockchain value in widget URLs', async () => {
+    const { protocol } = setup({ network: 'new-chain2/?&' }, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: 'New-Chain2/?&' }])
+    })
+    expect(await protocol.buy(OPTIONS)).toEqual({
+      buyUrl: 'https://app.dfx.swiss/buy?session=dummy-session&lang=en&asset-in=EUR&asset-out=ETH&blockchain=New-Chain2%2F%3F%26&amount-in=100'
+    })
+  })
+
+  test.each(['', 'New Chain', 'Chain\t2', 'Chain\n2', 'Chain\u00002', 'Chain\u007f2', 'Chain\u00852'])('rejects empty, whitespace or control characters in blockchain %#', async blockchain => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain }])
+    })
+    await failure(protocol.getSupportedCryptoAssets(), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
   })
 
   test.each([
@@ -575,7 +683,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], name: '' }]],
     ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], buyable: undefined }]],
     ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], sellable: undefined }]],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], blockchain: 1 }]],
+    ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], blockchain: null }]],
     ['getSupportedCountries', 'GET /v1/country', {}],
     ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], bankAllowed: 'true' }]],
     ['getSupportedCountries', 'GET /v1/country', [null]],
@@ -778,6 +886,16 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     const { protocol, account } = setup({ network: 'ethereum' })
     account.sign.mockRejectedValue(cause)
     const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+    expect(error.cause).toBe(cause)
+  })
+
+  test.each(['getAddress', 'sign'])('wraps a ProviderError subclass from %s on transaction details', async operation => {
+    class AccountProviderError extends ProviderError {}
+    const cause = new AccountProviderError('dummy-subclass', { reason: 'NETWORK_ERROR' })
+    const { protocol, account } = setup()
+    account[operation].mockRejectedValue(cause)
+    const error = await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+    expect(error).not.toBe(cause)
     expect(error.cause).toBe(cause)
   })
 
