@@ -1,7 +1,30 @@
 // Copyright 2026 DFX AG
 // SPDX-License-Identifier: Apache-2.0
 
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js'
+import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js'
+
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+/** Recover an EIP-191 personal-sign owner from signature bytes only. */
+export function recoverEvmAddress (message, signature) {
+  if (!/^(?:0x)?[0-9a-f]{130}$/i.test(signature)) return undefined
+  try {
+    const bytes = hexToBytes(signature.replace(/^0x/i, ''))
+    const recovery = bytes[64] >= 27 ? bytes[64] - 27 : bytes[64]
+    if (recovery !== 0 && recovery !== 1) return undefined
+    const payload = utf8ToBytes(message)
+    const prefix = utf8ToBytes(`\x19Ethereum Signed Message:\n${payload.length}`)
+    const digest = keccak256(concatBytes(prefix, payload))
+    const publicKey = secp256k1.Signature.fromBytes(bytes.subarray(0, 64), 'compact')
+      .addRecoveryBit(recovery).recoverPublicKey(digest).toBytes(false)
+    return `0x${bytesToHex(keccak256(publicKey.subarray(1)).subarray(12))}`
+  } catch {
+    // Unrecognized or invalid signatures remain the backend's decision.
+    return undefined
+  }
+}
 
 function base58 (hex) {
   let value = BigInt(`0x${hex}`)

@@ -155,7 +155,10 @@ Nonpositive response amounts cause `ProviderError(INTERNAL_SERVER_ERROR)`.
 validate inputs, resolve the pair for the direction, authenticate freshly and
 build the widget URL. A prior quote can surface limits before opening the widget;
 only confirmation in the widget is binding. `recipient` and `refundAddress`
-default to the account address. If both addresses match `0x` followed by exactly
+default to the authentication address: the signing owner EOA for ERC-4337,
+otherwise the account address. Explicit overrides must match that resolved address;
+the check happens after authentication, without an extra signing round for validation.
+If both addresses match `0x` followed by exactly
 40 hexadecimal digits, comparison ignores letter case to accept EVM checksum
 spelling. All other addresses must match exactly.
 
@@ -168,6 +171,11 @@ matches `USDT`). Quote bodies and widget URLs preserve the resolved DFX spelling
 `networkCode = blockchain.toLowerCase()`. The widget uses the original
 blockchain value. This covers DFX networks with complete asset
 metadata, not only EVM chains.
+
+When API `decimals` is null or absent, Bitcoin/BTC, Lightning/BTC, Arkade/BTC and
+Firo/FIRO use 8 decimals and are available for quotes and trading. An API value
+always wins, including zero. Other assets without decimals remain excluded from
+supported lists and cannot be traded.
 
 A ticker can occur on multiple networks. Without a network, ambiguous tickers
 throw `ValueError` listing the candidate networks. Lists include assets and
@@ -322,17 +330,27 @@ same fallback.
   session (`/v2/user` 200). Solana's 64-byte hex signature is converted to Base58,
   and Spark's DER-hex signature to compact hex, using only the constructor network
   and recognized formats; other signatures pass through unchanged.
-- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) currently cannot log in.
-  DFX checks ERC-1271 smart-contract signatures only for already deployed
-  contracts, and the WDK account's owner signature is not a Safe signature.
-- Bitcoin authentication is sandbox-verified, but BTC trading remains excluded while the
-  DFX API supplies no `decimals` for BTC.
-- The module excludes every asset without `decimals` from supported lists and
-  rejects it in trades. At publication, the DFX API omits `decimals` for
-  Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO; there is no crypto fallback table.
+- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) are supported through
+  signing-owner authentication, as in DFX's own `dfx-wallet`.
+  **DFX delivers purchases to the owner EOA, not to the Safe/smart account. The
+  owner belongs to the same key, but purchased funds are outside the smart account.**
+  Explicit Safe `recipient` or `refundAddress` overrides throw `ValueError`.
+  On the first EVM login, the module recovers the EIP-191 signer from the account's
+  signature; if it differs, it requests and signs a new challenge for the owner.
+  The instance caches the owner per account address, so later logins need one
+  signature. EOA accounts need only one signature from the start. Recovery is
+  limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
+  Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet
+  (case-insensitive). Unrecoverable signature formats pass through for backend validation.
+- Bitcoin authentication is sandbox-verified. Bitcoin/BTC, Lightning/BTC,
+  Arkade/BTC and Firo/FIRO are now tradable using an 8-decimal fallback when the
+  API omits `decimals` or supplies null, matching DFX wallets' BTC unit convention
+  (1 BTC = 10⁸ sat). API decimals take precedence; other missing-decimal assets
+  remain excluded. The owner-authentication and decimal-fallback changes have
+  not yet been retested against the sandbox.
 - Ambiguous tickers without a network are rejected.
 - HTTP 429 and account-state failures provisionally map to `INTERNAL_SERVER_ERROR`.
-- A `recipient` or `refundAddress` differing from the account address is rejected.
+- A `recipient` or `refundAddress` differing from the authentication address is rejected.
 - Request and widget amounts are limited to decimal values that `Number` carries
   without loss.
 - `networkCode` is `blockchain.toLowerCase()`; no chain aliases are translated.

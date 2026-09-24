@@ -11,7 +11,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Optional wallet-assigned `externalTransactionId` for buy/sell widget URLs and
   transaction lookup via `getTransactionDetail(id, { idType: 'externalTransactionId' })`.
 - Order-tracking timing and sandbox account compatibility documentation, including
-  ERC-4337 authentication and Bitcoin trading limitations.
+  ERC-4337 owner delivery and native-asset decimal fallbacks.
 - All eight WDK fiat methods for DFX production and sandbox environments.
 - Indicative buy and sell quotes with lossless response parsing and exact base units.
 - Authenticated widget URLs with account network binding and both amount modes.
@@ -27,8 +27,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Document heuristic payment matching, wallet waiting deadlines, unique IDs per
   widget opening and newest-transaction lookup within a reused widget session.
 - Record successful sandbox authentication with WDK EVM, Tron, Solana, Spark and
-  Bitcoin packages, including the completed Solana/Spark retest; Bitcoin trading
-  and ERC-4337 authentication limitations remain.
+  Bitcoin packages, including the completed Solana/Spark retest.
 - Package ownership and repository metadata now identify DFX AG.
 - CI runs coverage gates; release publishing uses the Holepunch OIDC action.
 - Effective fiat-per-crypto rates now divide unrounded response amounts, including
@@ -42,6 +41,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Authenticate EVM ERC-4337 accounts using the EIP-191 signing owner, as in DFX's
+  own wallet, with signature-only Noble recovery and an instance-local owner cache.
+  DFX delivers purchases to the owner EOA outside the smart account; recipient and
+  refund overrides must match that authentication address. Malformed signatures
+  retain backend validation. These changes await sandbox verification.
+- Use 8 decimals for Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO only when
+  API decimals are null or absent, enabling their supported-list entries, quotes
+  and trades while preserving API precedence and exclusion of other missing-decimal assets.
 - Normalize recognized Solana hex signatures to Base58 and Spark DER-hex signatures
   to compact hex for authentication, without accessing keys or adding dependencies.
 - Restrict external transaction IDs to 1–256 ASCII letters, digits, dots,
@@ -72,6 +79,6 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Known limitations
 
-- Assets without decimals and ambiguous tickers without a network are rejected.
+- Assets without API decimals or a native fallback, and ambiguous tickers without a network, are rejected.
 - Amounts outside the API's conservative numeric precision boundary are rejected.
 - Rate-limit and account-state error reasons are provisional pending WDK agreement.

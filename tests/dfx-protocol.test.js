@@ -3,6 +3,8 @@
 
 import { afterEach, describe, expect, jest, test } from '@jest/globals'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
 import {
   AccountRequiredError, BuyError, SellError, MaximumFeeExceededError, NoSuchElementError, IFiatProtocol as WalletFiatProtocol,
   ProviderError, ProviderRequiredError, ValueError, NotImplementedError, ReadOnlyAccountRequiredError
@@ -72,6 +74,37 @@ function request (fetch, path, method, body, token, environment = 'production') 
   expect(call[1].signal.aborted).toBe(false)
 }
 
+// Public test key 1. The expected EOA is fixed independently of recovery.
+const OWNER_KEY = Uint8Array.from([...new Array(31).fill(0), 1])
+const OWNER_ADDRESS = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
+const ACCOUNT_MESSAGE = 'Account challenge: Grüezi 👋'
+const OWNER_MESSAGE = 'Owner challenge: bitte anmelden 🔑'
+
+function ownerSignature (message, vOffset = 27) {
+  const payload = Buffer.from(message, 'utf8')
+  const digest = keccak_256(Buffer.concat([
+    Buffer.from(`\x19Ethereum Signed Message:\n${payload.length}`, 'utf8'), payload
+  ]))
+  const signature = secp256k1.sign(digest, OWNER_KEY, { prehash: false, format: 'recovered' })
+  return '0x' + Buffer.from(signature.subarray(1)).toString('hex') + (signature[0] + vOffset).toString(16).padStart(2, '0')
+}
+
+function ownerSetup (network = 'Ethereum', address = DUMMY_ADDRESS, vOffset = 27) {
+  return setup({ network }, {
+    'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: network }]),
+    [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: ACCOUNT_MESSAGE }),
+    [`GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`]: response({ message: OWNER_MESSAGE }),
+    [`GET /v1/auth/signMessage?address=${address}`]: response({ message: ACCOUNT_MESSAGE })
+  }, {
+    getAddress: jest.fn().mockResolvedValue(address),
+    sign: jest.fn(async message => ownerSignature(message, vOffset))
+  })
+}
+
+function authCalls (fetch) {
+  return fetch.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/auth'))
+}
+
 async function failure (promise, ErrorClass, message, reason) {
   const error = await promise.then(() => undefined, error => error)
   expect(error?.constructor).toBe(ErrorClass)
@@ -79,6 +112,184 @@ async function failure (promise, ErrorClass, message, reason) {
   if (reason !== undefined) expect(error.reason).toBe(reason)
   return error
 }
+
+describe('native decimal fallbacks', () => {
+  const natives = [['Bitcoin', 'BTC'], ['Lightning', 'BTC'], ['Arkade', 'BTC'], ['Firo', 'FIRO']]
+
+  test.each(natives.flatMap(([blockchain, name]) => [null, undefined, 0, 6].map(decimals =>
+    [blockchain, name, decimals]
+  )))('lists %s/%s with API decimals %s taking precedence', async (blockchain, name, decimals) => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain, name, decimals }])
+    })
+    expect(await protocol.getSupportedCryptoAssets()).toEqual([
+      { code: name, networkCode: blockchain.toLowerCase(), decimals: decimals ?? 8, name: 'Bitcoin' }
+    ])
+  })
+
+  test.each(natives.flatMap(([blockchain, name]) => ['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    [null, undefined, 6].map(decimals => [blockchain, name, method, decimals])
+  )))('%s/%s %s uses resolved decimals %s in request and response amounts', async (blockchain, name, method, decimals) => {
+    const { protocol, fetch } = setup({ network: blockchain }, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain, name, decimals }]),
+      'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 1.25, fees: { total: 1 } }),
+      'PUT /v1/sell/quote': response({ isValid: true, amount: 1.25, estimatedAmount: 100, feesTarget: { total: 1 } })
+    })
+    const units = 125n * 10n ** BigInt((decimals ?? 8) - 2)
+    const result = await protocol[method]({ cryptoAsset: name, fiatCurrency: 'EUR', cryptoAmount: units })
+    if (method.startsWith('quote')) {
+      expect(result).toEqual({ cryptoAmount: units, fiatAmount: 10000n, fee: 100n, rate: '80' })
+      const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
+      expect(body[method === 'quoteBuy' ? 'targetAmount' : 'amount']).toBe(1.25)
+    } else {
+      const url = new URL(result[`${method}Url`])
+      expect(url.searchParams.get(method === 'buy' ? 'amount-out' : 'amount-in')).toBe('1.25')
+      expect(url.searchParams.get('blockchain')).toBe(blockchain)
+    }
+  })
+
+  test.each([['Bitcoin', 'UNKNOWN'], ['Unknown', 'BTC'], ['Unknown', 'FIRO']])('excludes unknown %s/%s without decimals', async (blockchain, name) => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain, name }])
+    })
+    expect(await protocol.getSupportedCryptoAssets()).toEqual([])
+  })
+
+  test.each([-1, 1.5, 256, 'invalid'])('does not hide invalid native API decimals %s', async decimals => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], decimals }])
+    })
+    await expect(protocol.getSupportedCryptoAssets()).rejects.toBeInstanceOf(ProviderError)
+  })
+})
+
+describe('EVM signing-owner authentication', () => {
+  test.each(['Ethereum', 'Sepolia', 'BinanceSmartChain', 'Optimism', 'Arbitrum', 'Polygon', 'Base', 'Haqq', 'Gnosis', 'Plasma', 'Citrea', 'CitreaTestnet'])(
+    '%s resolves the owner and reuses its address with one signature on the next login', async network => {
+      const { protocol, account, fetch } = ownerSetup(network.toUpperCase())
+      await protocol.buy(OPTIONS)
+      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
+      const calls = authCalls(fetch)
+      expect(calls.map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
+        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
+        ['GET', `/v1/auth/signMessage?address=${OWNER_ADDRESS}`],
+        ['POST', '/v1/auth']
+      ])
+      expect(JSON.parse(calls[2][1].body)).toEqual({ address: OWNER_ADDRESS, signature: ownerSignature(OWNER_MESSAGE), blockchain: network })
+      account.sign.mockClear()
+      fetch.mockClear()
+      await protocol.sell(OPTIONS)
+      expect(account.sign.mock.calls).toEqual([[OWNER_MESSAGE]])
+      expect(authCalls(fetch).map(([url]) => new URL(url).pathname + new URL(url).search)).toEqual([
+        `/v1/auth/signMessage?address=${OWNER_ADDRESS}`, '/v1/auth'
+      ])
+      expect(JSON.parse(authCalls(fetch)[1][1].body).address).toBe(OWNER_ADDRESS)
+    }
+  )
+
+  test.each(['buy', 'sell'].flatMap(method => [0, 27].map(offset => [method, offset])))(
+    '%s accepts the owner in uppercase with v offset %s', async (method, offset) => {
+      const { protocol, account, fetch } = ownerSetup('Ethereum', DUMMY_ADDRESS, offset)
+      const field = method === 'buy' ? 'recipient' : 'refundAddress'
+      const result = await protocol[method]({ ...OPTIONS, [field]: '0x' + OWNER_ADDRESS.slice(2).toUpperCase() })
+      expect(new URL(result[`${method}Url`]).searchParams.get('session')).toBe('dummy-session')
+      expect(account.sign).toHaveBeenCalledTimes(2)
+      expect(JSON.parse(authCalls(fetch)[2][1].body).address).toBe(OWNER_ADDRESS)
+    }
+  )
+
+  test.each(['buy', 'sell'].flatMap(method => [false, true].map(cached => [method, cached])))(
+    '%s rejects an explicit Safe delivery address with cached owner %s', async (method, cached) => {
+      const { protocol, account } = ownerSetup()
+      if (cached) await protocol.buy(OPTIONS)
+      account.sign.mockClear()
+      const field = method === 'buy' ? 'recipient' : 'refundAddress'
+      await failure(protocol[method]({ ...OPTIONS, [field]: DUMMY_ADDRESS }), ValueError,
+        `DFX delivers to the signing owner address ${OWNER_ADDRESS} for this account; ${field} must match it and the smart-account address cannot be used as ${field}`)
+      expect(account.sign).toHaveBeenCalledTimes(cached ? 1 : 2)
+    }
+  )
+
+  test.each([OWNER_ADDRESS, '0x' + OWNER_ADDRESS.slice(2).toUpperCase()])('EOA %s needs one challenge and one signature per login', async address => {
+    const { protocol, account, fetch } = ownerSetup('Ethereum', address)
+    for (let index = 0; index < 2; index++) {
+      account.sign.mockClear()
+      fetch.mockClear()
+      await protocol.buy({ ...OPTIONS, recipient: OWNER_ADDRESS })
+      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE]])
+      expect(authCalls(fetch)).toHaveLength(2)
+      expect(new URL(authCalls(fetch)[0][0]).searchParams.get('address')).toBe(address)
+      expect(JSON.parse(authCalls(fetch)[1][1].body).address).toBe(address)
+    }
+  })
+
+  test.each(['Tron', 'Bitcoin', 'Solana', 'FutureEvm'])('%s leaves a recoverable EVM signature on the account address', async network => {
+    const { protocol, account, fetch } = ownerSetup(network)
+    await protocol.buy({ ...OPTIONS, recipient: DUMMY_ADDRESS })
+    expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE]])
+    expect(authCalls(fetch)).toHaveLength(2)
+    expect(JSON.parse(authCalls(fetch)[1][1].body)).toMatchObject({ address: DUMMY_ADDRESS, signature: ownerSignature(ACCOUNT_MESSAGE) })
+  })
+
+  test.each(['buy', 'sell', 'getTransactionDetail'].flatMap(method =>
+    ['0xsig', 'not-a-signature', '0x' + '00'.repeat(65), '0x' + '11'.repeat(64) + '02'].map(signature => [method, signature])
+  ))(
+    '%s forwards unrecoverable EVM signature %# with the account address and one challenge', async (method, signature) => {
+      const { protocol, account, fetch } = ownerSetup()
+      account.sign.mockResolvedValue(signature)
+      const result = await protocol[method](method === 'getTransactionDetail'
+        ? '123'
+        : { ...OPTIONS, [method === 'buy' ? 'recipient' : 'refundAddress']: DUMMY_ADDRESS })
+      if (method === 'getTransactionDetail') {
+        expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      } else {
+        expect(new URL(result[`${method}Url`]).searchParams.get('session')).toBe('dummy-session')
+      }
+      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE]])
+      expect(authCalls(fetch).map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
+        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
+        ['POST', '/v1/auth']
+      ])
+      expect(JSON.parse(authCalls(fetch)[1][1].body)).toMatchObject({ address: DUMMY_ADDRESS, signature })
+    }
+  )
+
+  test('a changed account address and a fresh instance do not borrow the previous owner cache', async () => {
+    const { protocol, account, fetch, routes } = ownerSetup()
+    await protocol.buy(OPTIONS)
+    const nextAddress = '0x0000000000000000000000000000000000000002'
+    routes[`GET /v1/auth/signMessage?address=${nextAddress}`] = response({ message: 'Next account' })
+    account.getAddress.mockResolvedValue(nextAddress)
+    account.sign.mockClear()
+    fetch.mockClear()
+    await protocol.buy(OPTIONS)
+    expect(account.sign.mock.calls).toEqual([['Next account'], [OWNER_MESSAGE]])
+    expect(new URL(authCalls(fetch)[0][0]).searchParams.get('address')).toBe(nextAddress)
+    const fresh = ownerSetup()
+    await fresh.protocol.buy(OPTIONS)
+    expect(fresh.account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
+  })
+
+  test('an unrecoverable signature does not prevent owner resolution on a later login', async () => {
+    const { protocol, account, fetch } = ownerSetup()
+    account.sign.mockResolvedValueOnce('invalid-signature')
+    await protocol.buy(OPTIONS)
+    account.sign.mockClear()
+    fetch.mockClear()
+    await protocol.buy(OPTIONS)
+    expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
+    expect(JSON.parse(authCalls(fetch)[2][1].body).address).toBe(OWNER_ADDRESS)
+  })
+
+  test('transaction-detail renewal authenticates the cached owner', async () => {
+    const { protocol, account, fetch, routes } = ownerSetup()
+    let attempts = 0
+    routes['GET /v1/transaction/detail/single?uid=123'] = () => ++attempts === 1 ? response({}, 401) : response(DUMMY_DETAIL)
+    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+    expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE], [OWNER_MESSAGE]])
+    expect(authCalls(fetch).filter(([, init]) => init.method === 'POST').map(([, init]) => JSON.parse(init.body).address)).toEqual([OWNER_ADDRESS, OWNER_ADDRESS])
+  })
+})
 
 describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks() })
@@ -321,7 +532,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expect(account.sign).toHaveBeenCalledWith('dummy-challenge')
     } else {
       await failure(pending, ValueError, `${field} must match the account address`)
-      expect(account.sign.mock.calls).toEqual([])
+      expect(account.sign.mock.calls).toEqual([['dummy-challenge']])
     }
   })
 
@@ -366,12 +577,13 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
   })
 
-  test('lists assets available in either direction and excludes missing decimals', async () => {
+  test('lists assets available in either direction including native decimal fallbacks', async () => {
     const { protocol, fetch } = setup()
     expect(await protocol.getSupportedCryptoAssets()).toEqual([
       { code: 'ETH', networkCode: 'ethereum', decimals: 18, name: 'Ether' },
       { code: 'USDT', networkCode: 'ethereum', decimals: 6, name: 'Tether' },
       { code: 'USDT', networkCode: 'tron', decimals: 6, name: 'Tether' },
+      { code: 'BTC', networkCode: 'bitcoin', decimals: 8, name: 'Bitcoin' },
       { code: 'BUY', networkCode: 'ethereum', decimals: 2, name: 'Buy only' },
       { code: 'SELL', networkCode: 'ethereum', decimals: 2, name: 'Sell only' }
     ])
@@ -444,7 +656,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     const field = method === 'buy' ? 'recipient' : 'refundAddress'
     const { protocol, account } = setup({ network: 'ethereum' })
     await failure(protocol[method]({ ...OPTIONS, [field]: 'dummy-other-address' }), ValueError, `${field} must match the account address`)
-    expect(account.sign.mock.calls).toEqual([])
+    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message']])
   })
 
   test.each(['buy', 'sell'])('%s requires a full account', async method => {
@@ -499,8 +711,10 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'])('%s rejects assets with missing decimals', async method => {
-    const { protocol } = setup({ network: 'bitcoin' })
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: 'BTC' }), ValueError, 'Missing decimals for Bitcoin/BTC')
+    const { protocol } = setup({ network: 'bitcoin' }, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], name: 'UNKNOWN' }])
+    })
+    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: 'UNKNOWN' }), ValueError, 'Missing decimals for Bitcoin/UNKNOWN')
   })
 
   test.each([

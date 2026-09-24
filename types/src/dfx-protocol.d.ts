@@ -38,9 +38,15 @@ export interface DfxTradeConfig {
     externalTransactionId?: string;
 }
 
-/** Purchase options with case-insensitive tickers/network and EVM checksum address equivalence. */
+/** Purchase options with case-insensitive tickers/network and EVM checksum address equivalence.
+ * recipient must match the authentication address: the signing owner EOA for ERC-4337.
+ * DFX delivers to that owner outside the smart account; explicit Safe recipients are rejected.
+ */
 export type DfxBuyOptions = BuyOptions & { config?: DfxTradeConfig };
-/** Sale options with case-insensitive tickers/network and EVM checksum address equivalence. */
+/** Sale options with case-insensitive tickers/network and EVM checksum address equivalence.
+ * refundAddress must match the authentication address: the signing owner EOA for ERC-4337.
+ * Explicit Safe refund addresses are rejected.
+ */
 export type DfxSellOptions = SellOptions & { config?: DfxTradeConfig };
 
 /** Provides DFX fiat quotes, widget URLs and transaction status. */
@@ -53,6 +59,8 @@ export default class DfxProtocol extends FiatProtocol {
     constructor(account: IWalletAccount, config?: DfxProtocolConfig);
     /**
      * Generates a fresh purchase URL. Requires a signing account and constructor network.
+     * ERC-4337 authenticates and receives purchases at the signing owner EOA, outside the smart account.
+     * Recipient validation follows authentication; a differing recipient throws ValueError.
      * Throws ValueError for invalid options. Exact account error constructors passed through:
      * AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, BuyError, MaximumFeeExceededError.
      * Other account errors, including subclasses, become ProviderError with the original cause.
@@ -66,6 +74,8 @@ export default class DfxProtocol extends FiatProtocol {
     quoteBuy(options: DfxBuyOptions): Promise<FiatQuote>;
     /**
      * Generates a fresh sale URL. Requires a signing account and constructor network.
+     * ERC-4337 authenticates as the signing owner EOA; refundAddress must match it.
+     * Refund address validation follows authentication; a differing address throws ValueError.
      * Throws ValueError for invalid options. Exact account error constructors passed through:
      * AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, SellError, MaximumFeeExceededError.
      * Other account errors, including subclasses, become ProviderError with the original cause.
@@ -87,7 +97,9 @@ export default class DfxProtocol extends FiatProtocol {
      * invalid options or input rejected by DFX; NoSuchElementError describes the API result only.
      */
     getTransactionDetail(txId: string, options?: { idType?: 'uid' | 'externalTransactionId' }): Promise<FiatTransactionDetail>;
-    /** Lists assets tradable in either direction with known decimals. */
+    /** Lists assets tradable in either direction with known decimals.
+     * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO fall back to 8 only for absent/null API decimals.
+     */
     getSupportedCryptoAssets(): Promise<SupportedCryptoAsset[]>;
     /** Lists currencies tradable in either direction with known ISO minor units. */
     getSupportedFiatCurrencies(): Promise<SupportedFiatCurrency[]>;

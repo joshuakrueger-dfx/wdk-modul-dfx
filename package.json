@@ -25,6 +25,8 @@
     "test:integration": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/integration.test.js --coverage=false"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "@tetherto/wdk-wallet": "^1.0.0-beta.19",
     "bare-node-runtime": "^1.1.4",
     "big.js": "^7.0.1"

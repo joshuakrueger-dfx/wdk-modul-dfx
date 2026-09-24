@@ -2,7 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from '@jest/globals'
-import { normalizeSignature } from '../src/signature.js'
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { normalizeSignature, recoverEvmAddress } from '../src/signature.js'
+
+test.each([0, 27].flatMap(offset => [false, true].flatMap(highS => ['', '0x', '0X'].map(prefix =>
+  [offset, highS, prefix]
+))))('recovers real personal-sign bytes with v offset %s, high-s %s and prefix %s', (offset, highS, prefix) => {
+  const message = 'Grüezi 👋\nAuthenticate this exact message'
+  const payload = Buffer.from(message, 'utf8')
+  const digest = keccak_256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${payload.length}`), payload]))
+  const key = Uint8Array.from([...new Array(31).fill(0), 1])
+  let signature = secp256k1.Signature.fromBytes(secp256k1.sign(digest, key, { prehash: false, format: 'recovered' }), 'recovered')
+  if (highS) {
+    const order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+    signature = new secp256k1.Signature(signature.r, order - signature.s, signature.recovery ^ 1)
+  }
+  const wire = prefix + signature.toHex('compact').toUpperCase() + (signature.recovery + offset).toString(16).padStart(2, '0')
+  expect(recoverEvmAddress(message, wire)).toBe('0x7e5f4552091a69125d5dfcb7b8c2659029395bdf')
+  expect(recoverEvmAddress(message + '!', wire)).not.toBe('0x7e5f4552091a69125d5dfcb7b8c2659029395bdf')
+})
+
+test.each([
+  '', 'invalid', '0xsig', '0x' + '11'.repeat(64), '0x' + 'gg'.repeat(65),
+  ...[2, 26, 29, 35, 255].map(v => '0x' + '11'.repeat(64) + v.toString(16).padStart(2, '0')),
+  '0x' + '00'.repeat(64) + '1b', '0x' + 'ff'.repeat(64) + '1c'
+])('leaves malformed recovery input %# to the backend', signature => {
+  expect(recoverEvmAddress('message', signature)).toBeUndefined()
+})
 
 // Hand-checkable bytes, not cryptographic validity fixtures:
 // 00 repeated 62 times followed by 0d24 = 3364 = 58 squared -> base58 "211".

@@ -7,9 +7,9 @@ import {
 } from '@tetherto/wdk-wallet/protocols'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxClient from './dfx-client.js'
-import { normalizeSignature } from './signature.js'
+import { normalizeSignature, recoverEvmAddress } from './signature.js'
 import { decimal, displayAmount, divideAmounts, minorUnits, positiveAmount, unexpected } from './amounts.js'
-import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './constants.js'
+import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS, NATIVE_DECIMALS } from './constants.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccount} IWalletAccount */
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccountReadOnly} IWalletAccountReadOnly */
@@ -46,12 +46,15 @@ import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './const
 
 /**
  * Purchase options with case-insensitive tickers/network and EVM checksum address equivalence.
+ * recipient must match the authentication address. ERC-4337 purchases go to the
+ * signing owner EOA outside the smart account; explicit Safe recipients are rejected.
  *
  * @typedef {BuyOptions & { config?: DfxTradeConfig }} DfxBuyOptions
  */
 
 /**
  * Sale options with case-insensitive tickers/network and EVM checksum address equivalence.
+ * refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
  *
  * @typedef {SellOptions & { config?: DfxTradeConfig }} DfxSellOptions
  */
@@ -93,12 +96,16 @@ function textField (value) {
   return value
 }
 
+function resolvedDecimals (asset) {
+  return asset.decimals ?? NATIVE_DECIMALS[`${asset.blockchain}/${asset.name}`]
+}
+
 function hasDecimals (asset) {
-  return asset.decimals !== undefined && asset.decimals !== null
+  return resolvedDecimals(asset) !== undefined
 }
 
 function assetDecimals (asset) {
-  const value = decimal(asset.decimals)
+  const value = decimal(resolvedDecimals(asset))
   if (value.lt(0) || value.gt(255) || !value.eq(value.round(0))) throw unexpected('Invalid asset decimals')
   return Number(value.toFixed())
 }
@@ -150,6 +157,9 @@ function transactionCode (rows, kind, id, name, blockchain) {
 export default class DfxProtocol extends FiatProtocol {
   /** @private */
   #token
+
+  /** @private */
+  #signers = new Map()
 
   /**
    * Creates an account-free DFX interface for quotes and supported lists.
@@ -206,7 +216,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If options is not an object or the asset or currency is unsupported for buying.
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
-   * @throws {ValueError} If recipient differs from the account address.
+   * @throws {ValueError} If recipient differs from the authentication address (the signing owner for ERC-4337).
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ProviderError} If authentication or the API request fails.
    * @throws {ProviderRequiredError} If the account requires a provider.
@@ -240,7 +250,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If options is not an object or the asset or currency is unsupported for selling.
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
-   * @throws {ValueError} If refundAddress differs from the account address.
+   * @throws {ValueError} If refundAddress differs from the authentication address (the signing owner for ERC-4337).
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ProviderError} If authentication or the API request fails.
    * @throws {ProviderRequiredError} If the account requires a provider.
@@ -310,6 +320,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Lists assets available for buying or selling with known decimals.
+   * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO default to 8 when API decimals are absent.
    *
    * @returns {Promise<SupportedCryptoAsset[]>} Tickers, lowercase blockchain names and base-unit decimals.
    * @throws {ProviderError} If the API fails or returns malformed asset metadata.
@@ -377,11 +388,26 @@ export default class DfxProtocol extends FiatProtocol {
     if (!this._hasAccount()) throw new ProviderError('A signing account is required for transaction details', { reason: ProviderErrorReason.UNAUTHORIZED })
     const accountAddress = address ?? await this._accountCall(method, 'getAddress')
     textField(accountAddress)
-    const challenge = record(await this._client._request(`/v1/auth/signMessage?${new URLSearchParams({ address: accountAddress })}`))
-    const signature = await this._accountCall(method, 'sign', textField(challenge.message))
+    const evm = EVM_BLOCKCHAINS.has(this._config.network)
+    const cacheKey = evm ? accountAddress.toLowerCase() : accountAddress
+    let authAddress = this.#signers.get(cacheKey) ?? accountAddress
+    const challenge = record(await this._client._request(`/v1/auth/signMessage?${new URLSearchParams({ address: authAddress })}`))
+    let signature = await this._accountCall(method, 'sign', textField(challenge.message))
     textField(signature)
+    if (evm && !this.#signers.has(cacheKey)) {
+      const signer = recoverEvmAddress(challenge.message, signature)
+      if (signer !== undefined) {
+        this.#signers.set(cacheKey, sameAddress(signer, accountAddress) ? accountAddress : signer)
+        if (!sameAddress(signer, accountAddress)) {
+          authAddress = signer
+          const ownerChallenge = record(await this._client._request(`/v1/auth/signMessage?${new URLSearchParams({ address: authAddress })}`))
+          signature = await this._accountCall(method, 'sign', textField(ownerChallenge.message))
+          textField(signature)
+        }
+      }
+    }
     const body = {
-      address: accountAddress,
+      address: authAddress,
       signature: normalizeSignature(this._config.network, signature),
       wallet: this._config.wallet,
       blockchain: BLOCKCHAINS.find(chain => chain.toLowerCase() === this._config.network),
@@ -389,7 +415,7 @@ export default class DfxProtocol extends FiatProtocol {
     }
     const auth = record(await this._client._request('/v1/auth', { method: 'POST', body: JSON.stringify(body) }))
     this.#token = textField(auth.accessToken)
-    return this.#token
+    return { token: this.#token, address: authAddress }
   }
 
   /** @private */
@@ -481,8 +507,13 @@ export default class DfxProtocol extends FiatProtocol {
     const { asset, currency, source, amount } = await this._trade(direction, options, true)
     const address = await this._accountCall(direction, 'getAddress')
     const field = direction === 'buy' ? 'recipient' : 'refundAddress'
-    if (options[field] !== undefined && !sameAddress(options[field], address)) throw new ValueError(`${field} must match the account address`)
-    const token = await this._authenticate(direction, address)
+    const { token, address: authAddress } = await this._authenticate(direction, address)
+    if (options[field] !== undefined && !sameAddress(options[field], authAddress)) {
+      if (!sameAddress(authAddress, address)) {
+        throw new ValueError(`DFX delivers to the signing owner address ${authAddress} for this account; ${field} must match it and the smart-account address cannot be used as ${field}`)
+      }
+      throw new ValueError(`${field} must match the account address`)
+    }
     const url = new URL(`/${direction}`, this._app)
     url.searchParams.set('session', token)
     url.searchParams.set('lang', this._config.language ?? 'en')
