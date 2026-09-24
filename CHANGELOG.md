@@ -24,6 +24,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Document heuristic payment matching, wallet waiting deadlines, unique IDs per
+  widget opening and newest-transaction lookup within a reused widget session.
+- Record successful sandbox authentication with WDK EVM, Tron, Solana, Spark and
+  Bitcoin packages, including the completed Solana/Spark retest; Bitcoin trading
+  and ERC-4337 authentication limitations remain.
 - Package ownership and repository metadata now identify DFX AG.
 - CI runs coverage gates; release publishing uses the Holepunch OIDC action.
 - Effective fiat-per-crypto rates now divide unrounded response amounts, including
@@ -39,7 +44,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Normalize recognized Solana hex signatures to Base58 and Spark DER-hex signatures
   to compact hex for authentication, without accessing keys or adding dependencies.
-- Map authentication POST HTTP 400/401 to `UNAUTHORIZED`, preserving the backend message.
+- Restrict external transaction IDs to 1–256 ASCII letters, digits, dots,
+  underscores, colons and hyphens for both buy/sell URLs and detail lookup;
+  invalid-ID errors identify the selected ID type.
+- Map authentication POST HTTP 401 and HTTP 400 with exactly `Invalid signature`
+  to `UNAUTHORIZED`; other authentication 400 responses remain internal provider
+  errors with their backend message.
+- Preserve string-array error messages joined with `'; '` across all endpoints.
 - Bind injected and ambient fetch to the global receiver.
 - Reject invalid configuration, timeout, string options and trade options with ValueError.
 - Reject timeouts above 2147483647 ms and invalid per-operation config objects/networks.

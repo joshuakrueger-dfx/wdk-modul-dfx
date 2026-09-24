@@ -41,7 +41,7 @@ import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './const
  *
  * @typedef {Object} DfxTradeConfig
  * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network.
- * @property {string} [externalTransactionId] - Wallet transaction identifier for buy/sell; non-empty, at most 256 characters.
+ * @property {string} [externalTransactionId] - Wallet-assigned ID, unique per widget opening; 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
  */
 
 /**
@@ -69,6 +69,12 @@ function optionsObject (value, name) {
 function optionalString (value, name) {
   if (value !== undefined && (typeof value !== 'string' || value.trim() === '')) {
     throw new ValueError(`${name} must be a non-empty string`)
+  }
+}
+
+function externalTransactionId (value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 256 || /[^A-Za-z0-9._:-]/.test(value)) {
+    throw new ValueError('externalTransactionId must contain 1–256 characters from A-Z, a-z, 0-9, dot (.), underscore (_), colon (:) and hyphen (-)')
   }
 }
 
@@ -201,7 +207,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
    * @throws {ValueError} If recipient differs from the account address.
-   * @throws {ValueError} If externalTransactionId is empty, not a string, or exceeds 256 characters.
+   * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ProviderError} If authentication or the API request fails.
    * @throws {ProviderRequiredError} If the account requires a provider.
    * @throws {BuyError} If the account reports a purchase failure.
@@ -235,7 +241,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
    * @throws {ValueError} If refundAddress differs from the account address.
-   * @throws {ValueError} If externalTransactionId is empty, not a string, or exceeds 256 characters.
+   * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ProviderError} If authentication or the API request fails.
    * @throws {ProviderRequiredError} If the account requires a provider.
    * @throws {SellError} If the account reports a sale failure.
@@ -275,7 +281,8 @@ export default class DfxProtocol extends FiatProtocol {
     optionsObject(options, 'options')
     const idType = options.idType === undefined ? 'uid' : options.idType
     if (idType !== 'uid' && idType !== 'externalTransactionId') throw new ValueError('idType must be uid or externalTransactionId')
-    if (typeof txId !== 'string' || txId.trim() === '') throw new ValueError('txId must be a non-empty UID')
+    if (idType === 'externalTransactionId') externalTransactionId(txId)
+    else if (typeof txId !== 'string' || txId.trim() === '') throw new ValueError('txId must be a non-empty UID')
     if (!this.#token) await this._authenticate('detail')
     const path = `/v1/transaction/detail/single?${new URLSearchParams({ [idType === 'uid' ? 'uid' : 'external-id']: txId })}`
     let data
@@ -403,8 +410,7 @@ export default class DfxProtocol extends FiatProtocol {
     optionalString(options.config?.network, 'network')
     const network = options.config?.network?.toLowerCase() ?? this._config.network
     if (widget) {
-      optionalString(options.config?.externalTransactionId, 'externalTransactionId')
-      if (options.config?.externalTransactionId?.length > 256) throw new ValueError('externalTransactionId must not exceed 256 characters')
+      if (options.config?.externalTransactionId !== undefined) externalTransactionId(options.config.externalTransactionId)
       if (!this._config.network) throw new ValueError('network must be configured in the constructor to bind the account to a chain')
       if (network !== this._config.network) throw new ValueError('network must match the account network configured in the constructor')
     }

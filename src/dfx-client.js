@@ -53,8 +53,12 @@ export default class DfxClient {
         if (response.ok) throw unexpected('Invalid JSON in DFX response', cause)
       }
       if (!response.ok) {
-        const message = typeof data?.message === 'string' ? data.message : `DFX HTTP ${response.status}`
-        if (path === '/v1/auth' && method === 'POST' && (response.status === 400 || response.status === 401)) {
+        const message = typeof data?.message === 'string' && data.message.length > 0
+          ? data.message
+          : Array.isArray(data?.message) && data.message.length > 0 && data.message.every(item => typeof item === 'string' && item.length > 0)
+            ? data.message.join('; ')
+            : `DFX HTTP ${response.status}`
+        if (path === '/v1/auth' && method === 'POST' && (response.status === 401 || (response.status === 400 && data?.message === 'Invalid signature'))) {
           throw new ProviderError(message, { reason: ProviderErrorReason.UNAUTHORIZED })
         }
         if (response.status === 404 && detail) throw new NoSuchElementError(message)

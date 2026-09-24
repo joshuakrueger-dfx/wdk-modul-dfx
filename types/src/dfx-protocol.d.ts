@@ -34,7 +34,7 @@ export interface DfxProtocolConfig {
 export interface DfxTradeConfig {
     /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. */
     network?: string;
-    /** Wallet transaction identifier for buy/sell; non-empty, at most 256 characters. */
+    /** Wallet-assigned ID, unique per widget opening; 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen. */
     externalTransactionId?: string;
 }
 
@@ -80,6 +80,7 @@ export default class DfxProtocol extends FiatProtocol {
     /**
      * Retrieves by UID (default) or external transaction ID, renewing an expired session once.
      * Resolves inactive catalog entries too. Invalid options or idType throw ValueError.
+     * External IDs must contain 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * Throws NoSuchElementError until DFX has registered a transaction for this id.
      * Requires authentication; only exact ProviderRequiredError and ProviderError account errors pass through.
      * Other account errors become ProviderError with cause; ValueError and NoSuchElementError describe the UID/API result only.

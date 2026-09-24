@@ -90,7 +90,8 @@ methods reject missing, null or non-object options with `ValueError`.
 When supplied, `options.config` must be a non-null object and its `network` must
 be a non-empty string; invalid values throw `ValueError`.
 For `buy` and `sell`, `options.config.externalTransactionId` optionally supplies a
-non-empty string of at most 256 characters. Invalid values throw `ValueError`.
+string matching `^[A-Za-z0-9._:-]{1,256}$`. The same validation applies to external
+ID lookups; invalid values throw `ValueError`.
 It is appended as `external-transaction-id` after the existing widget parameters.
 
 Production uses `https://api.dfx.swiss` and `https://app.dfx.swiss`.
@@ -214,13 +215,14 @@ it and renew it once after HTTP 401 when a signing account is available. A secon
 401 is returned as `ProviderError` with `UNAUTHORIZED`. Widget calls always obtain
 a fresh token. Supported lists and quotes need no signature; details do.
 
-### Tracking a wallet's order
+### Tracking a transaction
 
-Assign and persist your own unique ID before opening the widget, then pass it to
-`buy` or `sell` and reuse it for status queries:
+The wallet assigns and persists an ID unique to each widget opening, using only
+1–256 ASCII letters, digits, dots, underscores, colons or hyphens
+(`^[A-Za-z0-9._:-]{1,256}$`). Pass it to `buy` or `sell` and reuse it for queries:
 
 ```javascript
-const id = 'wallet-order-2026-09-24-001' // Create a unique ID for each order.
+const id = 'wallet-order-2026-09-24-001' // Create a unique ID for each widget opening.
 const { buyUrl } = await dfx.buy({
   cryptoAsset: 'ETH',
   fiatCurrency: 'EUR',
@@ -231,11 +233,17 @@ const { buyUrl } = await dfx.buy({
 const detail = await dfx.getTransactionDetail(id, { idType: 'externalTransactionId' })
 ```
 
-The same `config.externalTransactionId` applies to `sell`. DFX creates the
-transaction only after the user has retrieved the payment details in the widget
-and the payment has arrived. Queries throw `NoSuchElementError` until DFX has
-registered a transaction for this id. The wallet should treat this as “no order
-yet”, not as a failure. Receiving a widget URL does not establish an order.
+The same `config.externalTransactionId` applies to `sell`. DFX heuristically
+matches an incoming payment to a request: the amount must be within ±1%, the
+route, source and destination must match, and the request must be at most seven
+days old. If several requests match, the newest wins. A different amount or late
+payment can mean that the ID never receives a transaction. The wallet should
+stop waiting after its own deadline.
+
+Queries throw `NoSuchElementError` until a transaction is associated with the ID.
+Multiple orders in the same widget session can carry the same ID; lookup then
+returns the newest transaction. A Swap with the same ID also produces
+`NoSuchElementError`. Receiving a widget URL does not establish an order.
 
 ## Errors
 
@@ -244,7 +252,7 @@ Error classes are the WDK classes from `@tetherto/wdk-wallet/protocols`;
 
 | Class | Use |
 | --- | --- |
-| `ValueError` | Invalid configuration, pair, network, amount, address override or UID; input-related quote errors |
+| `ValueError` | Invalid configuration, pair, network, amount, address override, UID or external ID; input-related quote errors |
 | `AccountRequiredError` | `buy`/`sell` without a signing account |
 | `NoSuchElementError` | Transaction detail 404, or a Swap/Referral transaction |
 | `ProviderError` | HTTP, transport, timeout, authentication and malformed response failures |
@@ -272,7 +280,8 @@ Other failures thrown by `getAddress()` or `sign()` become
 | --- | --- |
 | Detail endpoint 404 | `NoSuchElementError` |
 | Quote or detail 400 / 422 attributable to caller input | `ValueError` |
-| `POST /v1/auth` 400 / 401 | `ProviderError(UNAUTHORIZED)`; backend message preserved |
+| `POST /v1/auth` 401, or 400 with message exactly `Invalid signature` | `ProviderError(UNAUTHORIZED)`; backend message preserved |
+| Other `POST /v1/auth` 400 | `ProviderError(INTERNAL_SERVER_ERROR)`; backend message preserved |
 | Supported-list or unattributable 400 / 422; authentication 422 | `ProviderError(INTERNAL_SERVER_ERROR)` |
 | 401 | `ProviderError(UNAUTHORIZED)` |
 | 403, including authentication geo-filter | `ProviderError(FORBIDDEN)`; provider message preserved |
@@ -285,6 +294,8 @@ Other failures thrown by `getAddress()` or `sign()` become
 HTTP 400/422 is attributed to input only for recognized input codes or explicit
 validation messages naming the quote fields or transaction UID. Unknown HTTP
 validation failures remain provider errors.
+Error-response `message` arrays containing only strings are joined with `'; '`
+for all endpoints.
 
 For `isValid: false`, the first structured error takes precedence over deprecated
 `error`. `AmountTooLow`, `AmountTooHigh`, `PaymentMethodNotAllowed`,
@@ -298,16 +309,17 @@ same fallback.
 
 - Sandbox checks on 2026-09-24 used the WDK wallet packages for EVM
   (`@tetherto/wdk-wallet-evm`, seven chains), Tron (`@tetherto/wdk-wallet-tron`),
-  Solana (`@tetherto/wdk-wallet-solana`) and Spark (`@tetherto/wdk-wallet-spark`).
-  EVM and Tron completed login and opened a prefilled widget. Solana and Spark
-  exposed signature-format mismatches addressed here: Solana's 64-byte hex
-  signature is converted to Base58, and Spark's DER-hex signature to compact hex.
-  These conversions use only the constructor network and recognized formats;
-  other signatures pass through unchanged. A sandbox retest of these fixes is pending.
+  Solana (`@tetherto/wdk-wallet-solana`), Spark (`@tetherto/wdk-wallet-spark`) and
+  Bitcoin. Authentication succeeded for all of them,
+  including the Solana/Spark retest. Each reached authenticated transaction lookup
+  (404 / `NoSuchElementError`); all except Bitcoin also obtained a valid widget
+  session (`/v2/user` 200). Solana's 64-byte hex signature is converted to Base58,
+  and Spark's DER-hex signature to compact hex, using only the constructor network
+  and recognized formats; other signatures pass through unchanged.
 - ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) currently cannot log in.
   DFX checks ERC-1271 smart-contract signatures only for already deployed
   contracts, and the WDK account's owner signature is not a Safe signature.
-- Bitcoin accounts can authenticate, but BTC trading remains excluded while the
+- Bitcoin authentication is sandbox-verified, but BTC trading remains excluded while the
   DFX API supplies no `decimals` for BTC.
 - The module excludes every asset without `decimals` from supported lists and
   rejects it in trades. At publication, the DFX API omits `decimals` for
