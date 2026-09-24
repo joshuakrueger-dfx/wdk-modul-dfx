@@ -1,4 +1,4 @@
-export { default } from "./src/dfx-protocol.js";
+export { default, default as DfxProtocol } from "./src/dfx-protocol.js";
 export type BuyOptions = import("@tetherto/wdk-wallet/protocols").BuyOptions;
 export type BuyCommonOptions = import("@tetherto/wdk-wallet/protocols").BuyCommonOptions;
 export type BuyExactCryptoAmountOptions = import("@tetherto/wdk-wallet/protocols").BuyExactCryptoAmountOptions;
@@ -15,3 +15,6 @@ export type FiatTransactionDetail = import("@tetherto/wdk-wallet/protocols").Fia
 export type SupportedCryptoAsset = import("@tetherto/wdk-wallet/protocols").SupportedCryptoAsset;
 export type SupportedFiatCurrency = import("@tetherto/wdk-wallet/protocols").SupportedFiatCurrency;
 export type SupportedCountry = import("@tetherto/wdk-wallet/protocols").SupportedCountry;
+
+export type { IFiatProtocol } from "@tetherto/wdk-wallet/protocols";
+export type { DfxProtocolConfig, DfxTradeConfig, DfxBuyOptions, DfxSellOptions } from "./src/dfx-protocol.js";

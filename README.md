@@ -1,79 +1,284 @@
 # @dfx.swiss/wdk-protocol-fiat-dfx
 
-WDK module to interact with the dfx fiat provider.
+[![Powered by WDK](https://img.shields.io/badge/Powered%20by-WDK-26A17B)](https://wdk.tether.io)
 
-## Installation
+DFX on- and off-ramping for WDK wallets. `DfxProtocol` provides indicative quotes,
+authenticated DFX purchase and sale widget URLs, supported asset/currency/country
+lists, and normalized transaction status. The user completes payment and any KYC
+in the DFX widget; this module does not execute trades or hold funds.
 
-```bash
+## Compatibility
+
+Implements `IFiatProtocol` by extending `FiatProtocol` from
+`@tetherto/wdk-wallet`. The declared compatibility and verification range is
+`@tetherto/wdk-wallet ^1.0.0-beta.19`. The local interface inspected for this
+implementation is `1.0.0-beta.19`; runtime tests against this range have **not yet
+been executed**. Do not interpret the range as a completed compatibility matrix.
+
+ES modules; Node.js with `fetch` (or an injected implementation). The Bare entry
+point loads `bare-node-runtime/global`. Bare runtime verification is pending.
+The module receives a WDK account from its caller and does not depend directly on
+`@tetherto/wdk` or any specific chain wallet package. Use one installed copy of
+`@tetherto/wdk-wallet` throughout the wallet application.
+
+## Install and quick start
+
+```sh
 npm install @dfx.swiss/wdk-protocol-fiat-dfx
 ```
 
-## Usage
+This account-free example can run as an ES module in Node.js. Quotes are indicative:
+they do not authenticate, reserve funds or create a transaction.
 
-```javascript
+```js
 import DfxProtocol from '@dfx.swiss/wdk-protocol-fiat-dfx'
 
-// Create fiat provider (account is optional for quotes)
-const fiatProtocol = new DfxProtocol(undefined, {
-  apiKey: 'your-api-key'
-})
-
-// Get supported assets
-const cryptoAssets = await fiatProtocol.getSupportedCryptoAssets()
-const fiatCurrencies = await fiatProtocol.getSupportedFiatCurrencies()
-const countries = await fiatProtocol.getSupportedCountries()
-
-// Get a buy quote
-const buyQuote = await fiatProtocol.quoteBuy({
-  cryptoAsset: 'btc',
-  fiatCurrency: 'USD',
-  fiatAmount: 10000n // $100.00 in cents
-})
-
-console.log('Buy quote:', buyQuote)
-
-// Generate buy URL (with wallet account for recipient address)
-const buyResult = await fiatProtocol.buy({
-  cryptoAsset: 'btc',
-  fiatCurrency: 'USD',
+const dfx = new DfxProtocol(undefined, { environment: 'sandbox' })
+const assets = await dfx.getSupportedCryptoAssets()
+const currencies = await dfx.getSupportedFiatCurrencies()
+const countries = await dfx.getSupportedCountries()
+const quote = await dfx.quoteBuy({
+  cryptoAsset: 'ETH',
+  fiatCurrency: 'EUR',
   fiatAmount: 10000n,
-  recipient: '0x...' // optional, defaults to account address
+  config: { network: 'ethereum' }
 })
-
-console.log('Buy URL:', buyResult.buyUrl)
+// Display these values in the application; quote amounts are bigint base units.
+export { assets, currencies, countries, quote }
 ```
 
-## API Reference
+With an existing signing WDK account bound to Ethereum:
 
-### DfxProtocol
-
-#### Constructor
-
-```javascript
-new DfxProtocol(account?)
+```js
+const dfx = new DfxProtocol(account, {
+  environment: 'sandbox',
+  network: 'ethereum',
+  wallet: 'YourWalletName'
+})
+const { buyUrl } = await dfx.buy({
+  cryptoAsset: 'ETH', fiatCurrency: 'EUR', fiatAmount: 10000n
+})
+const { sellUrl } = await dfx.sell({
+  cryptoAsset: 'ETH', fiatCurrency: 'EUR', cryptoAmount: 50000000000000000n
+})
+// Open buyUrl or sellUrl in the wallet's user-facing browser.
+// Supply a DFX transaction UID received from the DFX flow, not an internal ID:
+const detail = await dfx.getTransactionDetail(transactionUid)
 ```
 
-- `account` - Wallet account (optional, used for default recipient/refund addresses)
+The source checkout also contains [examples/buy.js](examples/buy.js), which runs a
+sandbox quote by default. Its account is explicitly a placeholder: substitute a
+real WDK account to generate an authenticated URL. No private keys are embedded.
 
-#### Methods
+## Configuration
 
-- `quoteBuy(options)` - Get a buy quote
-- `buy(options)` - Generate buy widget URL
-- `quoteSell(options)` - Get a sell quote
-- `sell(options)` - Generate sell widget URL
-- `getTransactionDetail(txId)` - Get transaction status
-- `getSupportedCryptoAssets()` - List supported crypto assets
-- `getSupportedFiatCurrencies()` - List supported fiat currencies
-- `getSupportedCountries()` - List supported countries
+Use `new DfxProtocol(account?, config?)`. Configuration belongs to the instance;
+the library never reads environment variables. `.env.example` is for the example
+application only.
 
-## Development
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `environment` | `'production'` | `'production'` or `'sandbox'`; unknown values throw `ValueError` at construction |
+| `wallet` | unset | Partner identifier supplied by the integrating wallet developer; forwarded to both quotes and authentication |
+| `network` | unset | Account's lowercase DFX blockchain name; required for `buy` and `sell` |
+| `publicKey` | unset | Public key sent as `key` during authentication (e.g. Arweave, Cardano, Internet Computer) |
+| `language` | `'en'` | Widget `lang` value |
+| `fetch` | `globalThis.fetch` | Injectable HTTP implementation; absence fails on the first request, not construction |
+| `timeout` | `30000` | Request deadline in milliseconds, implemented with `AbortController` |
 
-```bash
-npm install
-npm test
-npm run lint
+Production uses `https://api.dfx.swiss` and `https://app.dfx.swiss`.
+Sandbox uses `https://dev.api.dfx.swiss` and `https://dev.app.dfx.swiss`.
+The supplied fetch implementation must support abort signals, including response
+body reads.
+
+`options.config.network` selects the network for a trade. Quotes use it in
+preference to the constructor network. For widget URLs it must equal the
+constructor network; the caller is responsible for binding the actual account to
+that network. Authentication forwards its matching PascalCase DFX blockchain
+enum value; an unknown network has no `blockchain` auth field. The module never
+reads account key material. `getAddress()` and `sign(message)` are the account
+operations used.
+
+## Methods and units
+
+| Method | Result | Account |
+| --- | --- | --- |
+| `getSupportedCryptoAssets()` | `{ code, networkCode, decimals, name? }[]` | None |
+| `getSupportedFiatCurrencies()` | `{ code, decimals }[]` | None |
+| `getSupportedCountries()` | `{ code, name, isBuyAllowed, isSellAllowed }[]` | None |
+| `quoteBuy(options)` | `FiatQuote` | None |
+| `quoteSell(options)` | `FiatQuote` | None |
+| `buy(options)` | `{ buyUrl }` | Signing account |
+| `sell(options)` | `{ sellUrl }` | Signing account |
+| `getTransactionDetail(txId)` | `{ cryptoAsset, fiatCurrency, status }` | Authenticated session; signing account to obtain or renew it |
+
+Both trade directions take `cryptoAsset`, `fiatCurrency`, and **exactly one** of
+`cryptoAmount` and `fiatAmount`. Inputs accept positive `bigint` or positive safe
+integer `number` values in the smallest unit. Fractions, zero, negative numbers,
+unsafe integers, NaN and infinity are rejected. For EUR/CHF, `10000n` is 100.00;
+for an 18-decimal asset, `50000000000000000n` is 0.05.
+
+| Direction | Specified amount | Quote request | Widget query |
+| --- | --- | --- | --- |
+| Buy | Fiat | `amount` | `amount-in` |
+| Buy | Crypto | `targetAmount` | `amount-out` |
+| Sell | Crypto | `amount` | `amount-in` |
+| Sell | Fiat | `targetAmount` | `amount-out` |
+
+Responses are read as text and JSON numeric literals are preserved as strings
+before decimal arithmetic. `cryptoAmount`, `fiatAmount`, and `fee` in a quote are
+`bigint` in smallest units. Fractional smallest units in provider responses are
+rejected, never rounded. Requests use exact decimal literals; an amount whose
+normalized decimal representation changes through `Number` is rejected until the
+DFX backend's precision has been measured. This restriction also applies to widget
+amounts.
+
+`fee` is **fiat**, from `fees.total` on buys and `feesTarget.total` on sells, scaled
+to the smallest fiat unit. It includes the provider's reported aggregate fee;
+`feeAmount` and `exchangeRate` are not used. `rate` is a string in standard units
+of **fiat per crypto**. Buy `rate` passes through unchanged; sell `rate` is inverted
+and rounded half up to 18 significant digits without exponential notation.
+
+`buy` and `sell` do not request a quote or check provider amount limits. They
+validate inputs, resolve the pair for the direction, authenticate freshly and
+build the widget URL. A prior quote can surface limits before opening the widget;
+only confirmation in the widget is binding. `recipient` and `refundAddress`
+default to the account address; explicit identical addresses are accepted and
+different addresses are rejected.
+
+## Networks, currencies and countries
+
+The authoritative supported list comes live from the DFX API; it is not a static
+chain allowlist. Crypto `code` is the asset's ticker (`name`), not `uniqueName`.
+**Assumption F8a:** `networkCode = blockchain.toLowerCase()`; aliases for every
+WDK chain have not been independently verified. The widget uses the original
+PascalCase blockchain value. This covers DFX networks with complete asset
+metadata, not only EVM chains.
+
+A ticker can occur on multiple networks. Without a network, ambiguous tickers
+throw `ValueError` listing the candidate networks. Lists include assets and
+currencies that are buyable **or** sellable. Each trading method additionally
+requires availability in its own direction. Fiat minor units come from the
+module's ISO 4217 table; unknown currencies are excluded and rejected in trades.
+
+The measured snapshot on 2026-09-21 had 112 tradable assets, 26 duplicated tickers,
+and two tradable fiat currencies (EUR and CHF) among 24 returned currencies.
+Four assets lacked decimals: Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO.
+They are excluded from the supported list and rejected in trades until the API
+supplies decimals; there is no crypto fallback table. These counts are historical,
+not a promise about the current API.
+
+Country availability uses `bankAllowed` for **both** directions. Treating this
+nondirectional flag as buy and sell availability is an assumption; `cardAllowed`
+and the IP-related `locationAllowed` are not substituted. The module has no country
+selection argument; provider geography restrictions can still reject a request.
+
+## Transaction states and timing
+
+`txId` is always passed as DFX `uid`, even if it looks numeric. Asset and fiat IDs
+resolve against their respective catalogs. Unambiguous catalog names are a
+fallback; contradictory or unresolved metadata fails explicitly. Swap and Referral
+transactions are outside this fiat interface.
+
+| DFX state | WDK status |
+| --- | --- |
+| `Completed` | `completed` |
+| `Failed`, `Returned`, `Stopped`, `LimitExceeded`, `FeeTooHigh`, `PriceUndeterminable` | `failed` |
+| `Created`, `Processing`, `LiquidityPending`, `CheckPending`, `KycRequired`, `PayoutInProgress`, `WaitingForPayment`, `Unassigned`, `ReturnPending` | `in_progress` |
+| Any unknown state | `in_progress` |
+
+DFX's flow uses a bank transfer and payment reference. A transaction can remain
+`in_progress` while awaiting the incoming payment. **Actual status duration has
+not been measured**; this is not a card flow with a guaranteed completion time.
+
+A session token is kept only in private instance memory. Transaction details reuse
+it and renew it once after HTTP 401 when a signing account is available. A second
+401 is returned as `ProviderError` with `UNAUTHORIZED`. Widget calls always obtain
+a fresh token. Supported lists and quotes need no signature; details do.
+
+## Errors
+
+Error classes are the WDK classes from `@tetherto/wdk-wallet/protocols`;
+`ProviderErrorReason` comes from `@tetherto/wdk-wallet`.
+
+| Class | Use |
+| --- | --- |
+| `ValueError` | Invalid configuration, pair, network, amount, address override or UID; input-related quote errors |
+| `AccountRequiredError` | `buy`/`sell` without a signing account |
+| `NoSuchElementError` | Transaction detail 404, or a Swap/Referral transaction |
+| `ProviderError` | HTTP, transport, timeout, authentication and malformed response failures |
+| `ProviderRequiredError` | Not generated by this module: direct API access has no provider callback; may pass through from an account where the method contract permits it |
+| `MaximumFeeExceededError` | Not generated: no max-fee option; may pass through from an account on `buy`/`sell` |
+| `ReadOnlyAccountRequiredError` | Not generated: quotes are public and require no account; as an `AccountRequiredError` subclass it may pass through on widget calls |
+| `BuyError` | Not generated: its only reason is `INSUFFICIENT_FUNDS`, which URL generation cannot determine; may pass through from an account on `buy` |
+| `SellError` | Not generated for the same reason; may pass through from an account on `sell` |
+
+Only account errors allowed by the current method's WDK contract pass through.
+Other failures thrown by `getAddress()` or `sign()` become
+`ProviderError(UNAUTHORIZED)` with the original error as `cause`.
+
+| HTTP / failure | Mapping |
+| --- | --- |
+| Detail endpoint 404 | `NoSuchElementError` |
+| Quote or detail 400 / 422 attributable to caller input | `ValueError` |
+| Supported-list, authentication, or unattributable 400 / 422 | `ProviderError(INTERNAL_SERVER_ERROR)` |
+| 401 | `ProviderError(UNAUTHORIZED)` |
+| 403, including authentication geo-filter | `ProviderError(FORBIDDEN)`; provider message preserved |
+| 408 or abort deadline | `ProviderError(REQUEST_TIMEOUT)` |
+| 429 | `ProviderError(INTERNAL_SERVER_ERROR)` — provisional rate-limit mapping |
+| 5xx, other 404, all other unsuccessful statuses | `ProviderError(INTERNAL_SERVER_ERROR)` |
+| Connection or body transport failure | `ProviderError(NETWORK_ERROR)` |
+| Invalid JSON or unexpected response structure | `ProviderError(INTERNAL_SERVER_ERROR)` |
+
+HTTP 400/422 is attributed to input only for recognized input codes or explicit
+validation messages naming the quote fields or transaction UID. Unknown HTTP
+validation failures remain provider errors.
+
+For `isValid: false`, the first structured error takes precedence over deprecated
+`error`. `AmountTooLow`, `AmountTooHigh`, `PaymentMethodNotAllowed`,
+`IbanCurrencyMismatch`, `AssetUnsupported`, and `CurrencyUnsupported` map to
+`ValueError`, with the corresponding source/target limit when provided.
+KYC, bank setup, account limits, unconfirmed email and other account-state errors
+use `INTERNAL_SERVER_ERROR` provisionally. Missing or unknown error codes use the
+same fallback. Dedicated WDK reasons for account states and 429 remain an upstream
+release question.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting. No logging or
+telemetry is implemented. Private keys and seeds are never read; authentication
+uses the account's signing method and the exact message returned by the chosen
+DFX environment (including sandbox prefixes).
+
+Widget URLs contain a bearer session token: deliver them only to the user-facing
+browser and do not log or share them. Tokens are not persisted by the module.
+The integrating wallet controls signing consent, account/network binding and the
+lifetime of its instance. Supply only a **public** key in `publicKey` when needed.
+
+## Development and verification
+
+```sh
+npm install && npm run lint && npm run test:coverage
 ```
 
-## License
+Tests route injected fetch calls by HTTP method and URL. Coverage thresholds are
+100% statements, branches, functions and lines across `src/`. This threshold is a
+gate, **not yet a measured result**. Type declarations are maintained manually;
+do not regenerate them with `build:types`.
 
-Apache-2.0
+Outstanding release checks include the complete test/lint run, declaration
+compatibility, one installed wallet dependency, dependency audit, Node/Bare runs,
+full sandbox buy/sell flows, and repository/npm OIDC publishing configuration.
+The release workflow uses `holepunchto/actions/publish` after lint and coverage
+checks. Backend auth throttling and agreement on provisional
+error reasons remain release prerequisites. The full blockchain enum sent at auth
+follows the backend contract supplied for this implementation; Swagger's auth DTO
+currently advertises only EVM values. Non-EVM authentication needs runtime verification.
+
+## Support and license
+
+Use [GitHub Issues](https://github.com/DFXswiss/wdk-protocol-fiat-dfx/issues) for
+integration questions and non-sensitive bug reports. Report security issues
+privately using [GitHub Security Advisories](https://github.com/DFXswiss/wdk-protocol-fiat-dfx/security/advisories/new).
+
+Apache-2.0; see [LICENSE](LICENSE). Maintained by DFX AG.

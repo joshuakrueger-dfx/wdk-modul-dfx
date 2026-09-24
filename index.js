@@ -1,4 +1,4 @@
-// Copyright 2026 joshuakrueger-dfx &lt;joshua.krueger@dfx.swiss&gt;
+// Copyright 2026 DFX AG
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,4 +32,13 @@
 /** @typedef {import('@tetherto/wdk-wallet/protocols').SupportedFiatCurrency} SupportedFiatCurrency */
 /** @typedef {import('@tetherto/wdk-wallet/protocols').SupportedCountry} SupportedCountry */
 
-export { default } from './src/dfx-protocol.js'
+export { default, default as DfxProtocol } from './src/dfx-protocol.js'
+export { IFiatProtocol } from '@tetherto/wdk-wallet/protocols'
+
+/** @typedef {import('./src/dfx-protocol.js').DfxProtocolConfig} DfxProtocolConfig */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxTradeConfig} DfxTradeConfig */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxBuyOptions} DfxBuyOptions */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxSellOptions} DfxSellOptions */

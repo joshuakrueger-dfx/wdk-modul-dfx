@@ -2,8 +2,13 @@
   "name": "@dfx.swiss/wdk-protocol-fiat-dfx",
   "version": "1.0.0-beta.1",
   "description": "WDK module to interact with the dfx fiat provider.",
-  "keywords": ["wdk", "protocol", "fiat", "dfx"],
-  "author": "joshuakrueger-dfx &lt;joshua.krueger@dfx.swiss&gt;",
+  "keywords": [
+    "wdk",
+    "protocol",
+    "fiat",
+    "dfx"
+  ],
+  "author": "DFX AG",
   "license": "Apache-2.0",
   "main": "index.js",
   "type": "module",
@@ -16,8 +21,9 @@
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
   },
   "dependencies": {
-    "@tetherto/wdk-wallet": "^1.0.0-beta.1",
-    "bare-node-runtime": "^1.1.4"
+    "@tetherto/wdk-wallet": "^1.0.0-beta.19",
+    "bare-node-runtime": "^1.1.4",
+    "big.js": "^7.0.1"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
@@ -40,5 +46,33 @@
       "bare.js",
       "tests/**/*.js"
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DFXswiss/wdk-protocol-fiat-dfx"
+  },
+  "homepage": "https://github.com/DFXswiss/wdk-protocol-fiat-dfx",
+  "files": [
+    "index.js",
+    "bare.js",
+    "src/",
+    "types/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "jest": {
+    "collectCoverageFrom": [
+      "src/**/*.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 100,
+        "branches": 100,
+        "functions": 100,
+        "lines": 100
+      }
+    }
   }
 }
