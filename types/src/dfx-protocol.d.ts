@@ -81,9 +81,10 @@ export default class DfxProtocol extends FiatProtocol {
      * Retrieves by UID (default) or external transaction ID, renewing an expired session once.
      * Resolves inactive catalog entries too. Invalid options or idType throw ValueError.
      * External IDs must contain 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
-     * Throws NoSuchElementError until DFX has registered a transaction for this id.
+     * Throws NoSuchElementError until DFX has registered a transaction for this id, or for a Swap or Referral.
      * Requires authentication; only exact ProviderRequiredError and ProviderError account errors pass through.
-     * Other account errors become ProviderError with cause; ValueError and NoSuchElementError describe the UID/API result only.
+     * Other account errors become ProviderError with cause; ValueError describes invalid identifiers (UID or external ID),
+     * invalid options or input rejected by DFX; NoSuchElementError describes the API result only.
      */
     getTransactionDetail(txId: string, options?: { idType?: 'uid' | 'externalTransactionId' }): Promise<FiatTransactionDetail>;
     /** Lists assets tradable in either direction with known decimals. */

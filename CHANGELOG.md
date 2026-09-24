@@ -50,7 +50,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Map authentication POST HTTP 401 and HTTP 400 with exactly `Invalid signature`
   to `UNAUTHORIZED`; other authentication 400 responses remain internal provider
   errors with their backend message.
-- Preserve string-array error messages joined with `'; '` across all endpoints.
+- Join non-empty error-message arrays with `'; '` across all endpoints when every
+  element is a non-empty string after parsing, including JSON numbers parsed as
+  strings. Empty strings or other element types make the entire array fall back
+  to `DFX HTTP <status>`.
 - Bind injected and ambient fetch to the global receiver.
 - Reject invalid configuration, timeout, string options and trade options with ValueError.
 - Reject timeouts above 2147483647 ms and invalid per-operation config objects/networks.

@@ -236,14 +236,18 @@ const detail = await dfx.getTransactionDetail(id, { idType: 'externalTransaction
 The same `config.externalTransactionId` applies to `sell`. DFX heuristically
 matches an incoming payment to a request: the amount must be within ±1%, the
 route, source and destination must match, and the request must be at most seven
-days old. If several requests match, the newest wins. A different amount or late
+days old. If several requests match, DFX prioritizes `WaitingForPayment` over
+`Created` (requests confirmed in the widget first), then an exact amount over a
+match within ±1%, and only then the newest request. A different amount or late
 payment can mean that the ID never receives a transaction. The wallet should
 stop waiting after its own deadline.
 
 Queries throw `NoSuchElementError` until a transaction is associated with the ID.
 Multiple orders in the same widget session can carry the same ID; lookup then
-returns the newest transaction. A Swap with the same ID also produces
-`NoSuchElementError`. Receiving a widget URL does not establish an order.
+returns the newest transaction (`id DESC`). A newer Swap with the same ID can
+therefore hide an older purchase or sale: lookup throws `NoSuchElementError`
+even though that purchase or sale exists. Use a unique ID for each widget opening;
+do not reuse it for another opening. Receiving a widget URL does not establish an order.
 
 ## Errors
 
@@ -294,8 +298,10 @@ Other failures thrown by `getAddress()` or `sign()` become
 HTTP 400/422 is attributed to input only for recognized input codes or explicit
 validation messages naming the quote fields or transaction UID. Unknown HTTP
 validation failures remain provider errors.
-Error-response `message` arrays containing only strings are joined with `'; '`
-for all endpoints.
+For all endpoints, non-empty error-response `message` arrays are joined with
+`'; '` only when every element is a non-empty string after parsing. JSON numbers
+are parsed as strings and included. An empty string or any other element type
+causes the entire array to fall back to `DFX HTTP <status>`.
 
 For `isValid: false`, the first structured error takes precedence over deprecated
 `error`. `AmountTooLow`, `AmountTooHigh`, `PaymentMethodNotAllowed`,
@@ -310,7 +316,7 @@ same fallback.
 - Sandbox checks on 2026-09-24 used the WDK wallet packages for EVM
   (`@tetherto/wdk-wallet-evm`, seven chains), Tron (`@tetherto/wdk-wallet-tron`),
   Solana (`@tetherto/wdk-wallet-solana`), Spark (`@tetherto/wdk-wallet-spark`) and
-  Bitcoin. Authentication succeeded for all of them,
+  Bitcoin (`@tetherto/wdk-wallet-btc`, tested with BIP-84). Authentication succeeded for all of them,
   including the Solana/Spark retest. Each reached authenticated transaction lookup
   (404 / `NoSuchElementError`); all except Bitcoin also obtained a valid widget
   session (`/v2/user` 200). Solana's 64-byte hex signature is converted to Base58,
