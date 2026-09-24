@@ -18,7 +18,8 @@
     "lint": "standard",
     "lint:fix": "standard --fix",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --testPathIgnorePatterns=tests/integration.test.js",
+    "test:integration": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/integration.test.js --coverage=false"
   },
   "dependencies": {
     "@tetherto/wdk-wallet": "^1.0.0-beta.19",

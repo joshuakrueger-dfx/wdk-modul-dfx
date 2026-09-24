@@ -7,7 +7,7 @@ import {
 } from '@tetherto/wdk-wallet/protocols'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxClient from './dfx-client.js'
-import { decimal, displayAmount, invertRate, minorUnits, positiveAmount, unexpected } from './amounts.js'
+import { decimal, displayAmount, divideAmounts, minorUnits, positiveAmount, unexpected } from './amounts.js'
 import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './constants.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccount} IWalletAccount */
@@ -28,28 +28,28 @@ import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './const
  * @typedef {Object} DfxProtocolConfig
  * @property {'production' | 'sandbox'} [environment] - API and app environment. Defaults to production.
  * @property {string} [wallet] - Partner identifier supplied by the integrating wallet developer. No default.
- * @property {string} [network] - Lowercase DFX blockchain name binding the account to its chain. No default.
+ * @property {string} [network] - Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default.
  * @property {string} [publicKey] - Public key sent as key during authentication. No default.
  * @property {string} [language] - Widget language code. Defaults to en.
- * @property {typeof fetch} [fetch] - HTTP implementation. Defaults to globalThis.fetch.
- * @property {number} [timeout] - HTTP request deadline in milliseconds. Defaults to 30000.
+ * @property {typeof fetch} [fetch] - HTTP implementation called with globalThis as receiver. Defaults to globalThis.fetch.
+ * @property {number} [timeout] - Finite positive HTTP request deadline in milliseconds. Defaults to 30000.
  */
 
 /**
  * Per-operation network selection.
  *
  * @typedef {Object} DfxTradeConfig
- * @property {string} [network] - Lowercase DFX blockchain name. Defaults to the constructor network.
+ * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network.
  */
 
 /**
- * Purchase options with an optional network selection.
+ * Purchase options with case-insensitive tickers/network and EVM checksum address equivalence.
  *
  * @typedef {BuyOptions & { config?: DfxTradeConfig }} DfxBuyOptions
  */
 
 /**
- * Sale options with an optional network selection.
+ * Sale options with case-insensitive tickers/network and EVM checksum address equivalence.
  *
  * @typedef {SellOptions & { config?: DfxTradeConfig }} DfxSellOptions
  */
@@ -57,7 +57,22 @@ import { BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS } from './const
 const ACCOUNT_ERRORS = {
   buy: [AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, BuyError, MaximumFeeExceededError],
   sell: [AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, SellError, MaximumFeeExceededError],
-  detail: [ValueError, NoSuchElementError, ProviderRequiredError, ProviderError]
+  detail: [ProviderRequiredError, ProviderError]
+}
+
+function optionsObject (value, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValueError(`${name} must be an object`)
+}
+
+function optionalString (value, name) {
+  if (value !== undefined && (typeof value !== 'string' || value.trim() === '')) {
+    throw new ValueError(`${name} must be a non-empty string`)
+  }
+}
+
+function sameAddress (left, right) {
+  const evm = /^0x[0-9a-fA-F]{40}$/
+  return evm.test(left) && evm.test(right) ? left.toLowerCase() === right.toLowerCase() : left === right
 }
 
 function record (value) {
@@ -92,17 +107,30 @@ function fiatDecimals (currency) {
   return Object.hasOwn(FIAT_DECIMALS, currency.name) ? FIAT_DECIMALS[currency.name] : undefined
 }
 
-function transactionCode (rows, id, name, blockchain) {
-  const byId = id == null ? undefined : rows.find(row => row.id === identifier(id))
-  const matches = rows.filter(row => name != null && (row.name === name || row.uniqueName === name) &&
-    (blockchain == null || row.blockchain === blockchain))
+function catalogRow (row, kind) {
+  record(row)
+  textField(row.name)
+  if (typeof row.buyable !== 'boolean' || typeof row.sellable !== 'boolean') throw unexpected()
+  if (kind === 'asset') {
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(textField(row.blockchain))) throw unexpected()
+    if (row.description != null) textField(row.description)
+    if (hasDecimals(row)) assetDecimals(row)
+  }
+  return { ...row, id: identifier(row.id) }
+}
+
+function transactionCode (rows, kind, id, name, blockchain) {
+  const byId = id == null ? undefined : rows.find(row => row?.id === identifier(id))
   if (byId) {
+    catalogRow(byId, kind)
     if ((name != null && byId.name !== name && byId.uniqueName !== name) ||
       (blockchain != null && byId.blockchain !== blockchain)) throw unexpected('Conflicting transaction asset metadata')
     return byId.name
   }
+  const matches = rows.filter(row => row != null && name != null && (row.name === name || row.uniqueName === name) &&
+    (blockchain == null || row.blockchain === blockchain))
   if (matches.length !== 1) throw unexpected('Unable to resolve transaction asset')
-  return matches[0].name
+  return catalogRow(matches[0], kind).name
 }
 
 /**
@@ -120,7 +148,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @overload
    * @param {undefined} [account] - Omit for public API access.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
-   * @throws {ValueError} If the environment is unknown.
+   * @throws {ValueError} If configuration is not an object, the environment is unknown, or an option is invalid.
    */
   /**
    * Creates a DFX interface with a read-only wallet account.
@@ -128,7 +156,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @overload
    * @param {IWalletAccountReadOnly} account - Account available to the protocol.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
-   * @throws {ValueError} If the environment is unknown.
+   * @throws {ValueError} If configuration is not an object, the environment is unknown, or an option is invalid.
    */
   /**
    * Creates a DFX interface with a signing wallet account.
@@ -136,16 +164,21 @@ export default class DfxProtocol extends FiatProtocol {
    * @overload
    * @param {IWalletAccount} account - Account used to sign DFX authentication messages.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
-   * @throws {ValueError} If the environment is unknown.
+   * @throws {ValueError} If configuration is not an object, the environment is unknown, or an option is invalid.
    */
   constructor (account, config = {}) {
     super(account)
+    optionsObject(config, 'config')
+    if (config.timeout !== undefined && (typeof config.timeout !== 'number' || !Number.isFinite(config.timeout) || config.timeout <= 0)) {
+      throw new ValueError('timeout must be a finite number greater than zero')
+    }
+    for (const field of ['network', 'wallet', 'publicKey', 'language']) optionalString(config[field], field)
     const environment = config.environment ?? 'production'
     if (environment !== 'production' && environment !== 'sandbox') {
       throw new ValueError('environment must be production or sandbox')
     }
     /** @private */
-    this._config = { ...config, environment }
+    this._config = { ...config, environment, network: config.network?.toLowerCase() }
     /** @private */
     this._client = new DfxClient(this._config)
     /** @private */
@@ -154,11 +187,13 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Generates a fresh authenticated purchase widget URL.
+   * Account errors pass through only for the exact constructors listed below;
+   * subclasses and other account failures become ProviderError with the original cause.
    *
    * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units.
    * @returns {Promise<BuyResult>} The purchase widget URL.
    * @throws {AccountRequiredError} If a signing account is unavailable.
-   * @throws {ValueError} If the asset or currency is unsupported for buying.
+   * @throws {ValueError} If options is not an object or the asset or currency is unsupported for buying.
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
    * @throws {ValueError} If recipient differs from the account address.
@@ -175,8 +210,8 @@ export default class DfxProtocol extends FiatProtocol {
    * Quotes an indicative purchase without a signature or reservation.
    *
    * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units.
-   * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate in fiat per crypto.
-   * @throws {ValueError} If the pair, network or amount is invalid.
+   * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
+   * @throws {ValueError} If options is not an object or the pair, network or amount is invalid.
    * @throws {ProviderError} If the API fails or returns malformed quote data.
    */
   async quoteBuy (options) {
@@ -185,11 +220,13 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Generates a fresh authenticated sale widget URL.
+   * Account errors pass through only for the exact constructors listed below;
+   * subclasses and other account failures become ProviderError with the original cause.
    *
    * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units.
    * @returns {Promise<SellResult>} The sale widget URL.
    * @throws {AccountRequiredError} If a signing account is unavailable.
-   * @throws {ValueError} If the asset or currency is unsupported for selling.
+   * @throws {ValueError} If options is not an object or the asset or currency is unsupported for selling.
    * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
    * @throws {ValueError} If the network is missing or differs from the account network.
    * @throws {ValueError} If refundAddress differs from the account address.
@@ -206,8 +243,8 @@ export default class DfxProtocol extends FiatProtocol {
    * Quotes an indicative sale without a signature or reservation.
    *
    * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units.
-   * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate in fiat per crypto.
-   * @throws {ValueError} If the pair, network or amount is invalid.
+   * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
+   * @throws {ValueError} If options is not an object or the pair, network or amount is invalid.
    * @throws {ProviderError} If the API fails or returns malformed quote data.
    */
   async quoteSell (options) {
@@ -216,6 +253,9 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Retrieves a fiat transaction by its DFX UID, renewing an expired session once.
+   * Resolves inactive catalog rows too, validating only the matched rows.
+   * Only exact ProviderRequiredError and ProviderError account errors pass through;
+   * all other account failures become ProviderError with the original cause.
    *
    * @param {string} txId - DFX transaction UID, including numeric-looking UIDs.
    * @returns {Promise<FiatTransactionDetail>} Normalized transaction status and asset codes.
@@ -241,12 +281,12 @@ export default class DfxProtocol extends FiatProtocol {
     if (data.type === 'Swap' || data.type === 'Referral') throw new NoSuchElementError('Transaction is not a DFX fiat transaction')
     if (data.type !== 'Buy' && data.type !== 'Sell') throw unexpected('Unknown DFX transaction type')
     textField(data.state)
-    const [assets, currencies] = await Promise.all([this._catalog('asset'), this._catalog('fiat')])
+    const [assets, currencies] = await Promise.all([this._catalog('asset', false), this._catalog('fiat', false)])
     const cryptoSide = data.type === 'Buy' ? 'output' : 'input'
     const fiatSide = data.type === 'Buy' ? 'input' : 'output'
     return {
-      cryptoAsset: transactionCode(assets, data[`${cryptoSide}AssetId`], data[`${cryptoSide}Asset`], data[`${cryptoSide}Blockchain`]),
-      fiatCurrency: transactionCode(currencies, data[`${fiatSide}AssetId`], data[`${fiatSide}Asset`]),
+      cryptoAsset: transactionCode(assets, 'asset', data[`${cryptoSide}AssetId`], data[`${cryptoSide}Asset`], data[`${cryptoSide}Blockchain`]),
+      fiatCurrency: transactionCode(currencies, 'fiat', data[`${fiatSide}AssetId`], data[`${fiatSide}Asset`]),
       status: data.state === 'Completed' ? 'completed' : FAILED_STATES.has(data.state) ? 'failed' : 'in_progress'
     }
   }
@@ -259,7 +299,7 @@ export default class DfxProtocol extends FiatProtocol {
    */
   async getSupportedCryptoAssets () {
     const assets = await this._catalog('asset')
-    return assets.filter(asset => (asset.buyable || asset.sellable) && hasDecimals(asset)).map(asset => ({
+    return assets.filter(hasDecimals).map(asset => ({
       code: asset.name,
       networkCode: asset.blockchain.toLowerCase(),
       decimals: assetDecimals(asset),
@@ -275,7 +315,7 @@ export default class DfxProtocol extends FiatProtocol {
    */
   async getSupportedFiatCurrencies () {
     const currencies = await this._catalog('fiat')
-    return currencies.filter(currency => (currency.buyable || currency.sellable) && fiatDecimals(currency) !== undefined)
+    return currencies.filter(currency => fiatDecimals(currency) !== undefined)
       .map(currency => ({ code: currency.name, decimals: fiatDecimals(currency) }))
   }
 
@@ -310,7 +350,7 @@ export default class DfxProtocol extends FiatProtocol {
     try {
       return await this._account[operation](...args)
     } catch (cause) {
-      if (ACCOUNT_ERRORS[method].some(ErrorClass => cause instanceof ErrorClass)) throw cause
+      if (ACCOUNT_ERRORS[method].includes(cause?.constructor)) throw cause
       throw new ProviderError('DFX account authentication failed', { reason: ProviderErrorReason.UNAUTHORIZED, cause })
     }
   }
@@ -336,41 +376,34 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /** @private */
-  async _catalog (kind) {
+  async _catalog (kind, tradable = true) {
     const rows = await this._client._request(`/v1/${kind}`)
     if (!Array.isArray(rows)) throw unexpected()
-    return rows.map(row => {
-      record(row)
-      textField(row.name)
-      if (typeof row.buyable !== 'boolean' || typeof row.sellable !== 'boolean') throw unexpected()
-      if (kind === 'asset') {
-        textField(row.blockchain)
-        if (row.description != null) textField(row.description)
-        if (hasDecimals(row)) assetDecimals(row)
-      }
-      return { ...row, id: identifier(row.id) }
-    })
+    if (!tradable) return rows
+    return rows.filter(row => row?.buyable === true || row?.sellable === true).map(row => catalogRow(row, kind))
   }
 
   /** @private */
   async _trade (direction, options, widget = false) {
+    optionsObject(options, 'options')
     const isFiat = options.fiatAmount !== undefined
     if (isFiat === (options.cryptoAmount !== undefined)) throw new ValueError('Exactly one of fiatAmount and cryptoAmount must be supplied')
     const amount = positiveAmount(isFiat ? options.fiatAmount : options.cryptoAmount)
-    const network = options.config?.network ?? this._config.network
+    optionalString(options.config?.network, 'network')
+    const network = options.config?.network?.toLowerCase() ?? this._config.network
     if (widget) {
       if (!this._config.network) throw new ValueError('network must be configured in the constructor to bind the account to a chain')
       if (network !== this._config.network) throw new ValueError('network must match the account network configured in the constructor')
     }
     const [assets, currencies] = await Promise.all([this._catalog('asset'), this._catalog('fiat')])
     const capability = direction === 'buy' ? 'buyable' : 'sellable'
-    const matches = assets.filter(asset => asset.name === options.cryptoAsset && asset[capability] &&
+    const matches = assets.filter(asset => typeof options.cryptoAsset === 'string' && asset.name.toLowerCase() === options.cryptoAsset.toLowerCase() && asset[capability] &&
       (network === undefined || asset.blockchain.toLowerCase() === network))
     if (!matches.length) throw new ValueError(`Unsupported ${direction} asset or network: ${options.cryptoAsset}`)
     if (matches.length > 1) throw new ValueError(`Ambiguous asset ${options.cryptoAsset}; configure network: ${matches.map(asset => asset.blockchain.toLowerCase()).join(', ')}`)
     const asset = matches[0]
     if (!hasDecimals(asset)) throw new ValueError(`Missing decimals for ${asset.blockchain}/${asset.name}`)
-    const currency = currencies.find(currency => currency.name === options.fiatCurrency && currency[capability])
+    const currency = currencies.find(currency => typeof options.fiatCurrency === 'string' && currency.name.toLowerCase() === options.fiatCurrency.toLowerCase() && currency[capability])
     if (!currency || fiatDecimals(currency) === undefined) throw new ValueError(`Unsupported ${direction} fiat currency: ${options.fiatCurrency}`)
     const source = direction === 'buy' ? isFiat : !isFiat
     return {
@@ -405,22 +438,23 @@ export default class DfxProtocol extends FiatProtocol {
     }
     if (quote.isValid !== true) throw unexpected('Missing quote validity')
     const buy = direction === 'buy'
-    decimal(quote.rate)
+    const rate = divideAmounts(buy ? quote.amount : quote.estimatedAmount, buy ? quote.estimatedAmount : quote.amount)
     return {
       cryptoAmount: minorUnits(buy ? quote.estimatedAmount : quote.amount, assetDecimals(asset)),
       fiatAmount: minorUnits(buy ? quote.amount : quote.estimatedAmount, fiatDecimals(currency)),
       fee: minorUnits(buy ? quote.fees?.total : quote.feesTarget?.total, fiatDecimals(currency)),
-      rate: buy ? quote.rate : invertRate(quote.rate)
+      rate
     }
   }
 
   /** @private */
   async _widget (direction, options) {
+    optionsObject(options, 'options')
     if (!this._hasAccount()) throw new AccountRequiredError('A signing account is required for buy and sell')
     const { asset, currency, source, amount } = await this._trade(direction, options, true)
     const address = await this._accountCall(direction, 'getAddress')
     const field = direction === 'buy' ? 'recipient' : 'refundAddress'
-    if (options[field] !== undefined && options[field] !== address) throw new ValueError(`${field} must match the account address`)
+    if (options[field] !== undefined && !sameAddress(options[field], address)) throw new ValueError(`${field} must match the account address`)
     const token = await this._authenticate(direction, address)
     const url = new URL(`/${direction}`, this._app)
     url.searchParams.set('session', token)

@@ -47,12 +47,14 @@ export function displayAmount (amount, decimals) {
   return result
 }
 
-export function invertRate (value) {
-  const rate = decimal(value)
-  if (rate.lte(0)) throw unexpected('DFX rate must be positive')
-  // Determine the reciprocal's exponent, then round its integer significand exactly once.
-  const exponent = -rate.e - (rate.c.length === 1 && rate.c[0] === 1 ? 0 : 1)
+export function divideAmounts (numerator, denominator) {
+  const fiat = decimal(numerator)
+  const crypto = decimal(denominator)
+  if (fiat.lte(0) || crypto.lte(0)) throw unexpected('DFX quote amounts must be positive')
+  // Compare normalized significands to determine the quotient's exact exponent.
+  let exponent = fiat.e - crypto.e
+  if (fiat.lt(crypto.times(new Decimal(`1e${exponent}`)))) exponent--
   const shift = 17 - exponent
-  const significand = new Decimal(`1e${shift}`).div(rate)
+  const significand = fiat.times(new Decimal(`1e${shift}`)).div(crypto)
   return significand.times(new Decimal(`1e${-shift}`)).toFixed()
 }

@@ -92,6 +92,140 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     expect(() => new DfxProtocol(undefined, { environment: 'unknown' })).toThrow(new ValueError('environment must be production or sandbox'))
   })
 
+  test.each([null, false, 1, 'config', [], () => {}].map(config => [config]))('rejects non-object configuration %#', config => {
+    expect(() => new DfxProtocol(undefined, config)).toThrow(new ValueError('config must be an object'))
+  })
+
+  test.each([null, false, '100', 0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', timeout => {
+    expect(() => new DfxProtocol(undefined, { timeout })).toThrow(new ValueError('timeout must be a finite number greater than zero'))
+  })
+
+  test.each(['network', 'wallet', 'publicKey', 'language'].flatMap(field =>
+    [null, false, 1, '', '  ', {}, []].map(value => [field, value])
+  ))('rejects invalid constructor string %s case %#', (field, value) => {
+    expect(() => new DfxProtocol(undefined, { [field]: value })).toThrow(new ValueError(`${field} must be a non-empty string`))
+  })
+
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    [undefined, null, false, 1, 'options', [], () => {}].map(options => [method, options])
+  ))('%s rejects non-object options %# before requiring an account', async (method, options) => {
+    await failure(new DfxProtocol()[method](options), ValueError, 'options must be an object')
+  })
+
+  test.each([null, 1, ''])('rejects invalid per-operation networks %#', async network => {
+    const { protocol } = setup()
+    await failure(protocol.quoteBuy({ ...OPTIONS, config: { network } }), ValueError, 'network must be a non-empty string')
+  })
+
+  test.each([
+    { cryptoAsset: undefined }, { cryptoAsset: 1 }, { fiatCurrency: undefined }, { fiatCurrency: 1 }
+  ])('rejects invalid ticker fields %# as ValueError', async fields => {
+    const { protocol } = setup()
+    const field = Object.keys(fields)[0]
+    const message = field === 'cryptoAsset' ? `Unsupported buy asset or network: ${fields[field]}` : `Unsupported buy fiat currency: ${fields[field]}`
+    await failure(protocol.quoteBuy({ ...OPTIONS, ...fields }), ValueError, message)
+  })
+
+  test.each(['buy', 'sell'])('%s preserves DFX spelling with mixed-case input', async method => {
+    const { protocol, fetch } = setup({ network: 'eThErEuM' })
+    const result = await protocol[method]({ cryptoAsset: 'USDt', fiatCurrency: 'eUr', fiatAmount: 10000n, config: { network: 'ETHEREUM' } })
+    const assets = method === 'buy' ? 'asset-in=EUR&asset-out=USDT' : 'asset-in=USDT&asset-out=EUR'
+    const amount = method === 'buy' ? 'amount-in' : 'amount-out'
+    expect(result).toEqual({ [`${method}Url`]: `https://app.dfx.swiss/${method}?session=dummy-session&lang=en&${assets}&blockchain=Ethereum&${amount}=100` })
+    request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature","blockchain":"Ethereum"}`)
+  })
+
+  test.each(['buy', 'sell'])('%s quote computes the effective CHF/USDT rate from amounts', async direction => {
+    const body = direction === 'buy'
+      ? '{"isValid":true,"amount":100,"estimatedAmount":114.32,"rate":0.87,"fees":{"total":1}}'
+      : '{"isValid":true,"amount":3,"estimatedAmount":7,"rate":0.42857,"feesTarget":{"total":1}}'
+    const { protocol, fetch } = setup({ network: 'ETHEREUM' }, { [`PUT /v1/${direction}/quote`]: response(body) })
+    const method = direction === 'buy' ? 'quoteBuy' : 'quoteSell'
+    const expected = direction === 'buy'
+      ? { cryptoAmount: 114320000n, fiatAmount: 10000n, fee: 100n, rate: '0.874737578726382085' }
+      : { cryptoAmount: 3000000n, fiatAmount: 700n, fee: 100n, rate: '2.33333333333333333' }
+    expect(await protocol[method]({ cryptoAsset: 'USDt', fiatCurrency: 'chf', fiatAmount: 10000n, config: { network: 'TrOn' } })).toEqual(expected)
+    const payment = direction === 'buy' ? ',"paymentMethod":"Bank"' : ''
+    const field = direction === 'buy' ? 'amount' : 'targetAmount'
+    request(fetch, `/v1/${direction}/quote`, 'PUT', `{"currency":{"name":"CHF"},"asset":{"id":3},"specialCode":""${payment},"${field}":100}`)
+  })
+
+  test.each([undefined, 0, -1, 'not-a-rate'])('does not use the provider rate field %#', async rate => {
+    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount: 3, estimatedAmount: 2, rate, fees: { total: 0 } }) })
+    expect(await protocol.quoteBuy(OPTIONS)).toEqual({ cryptoAmount: 2000000000000000000n, fiatAmount: 300n, fee: 0n, rate: '1.5' })
+  })
+
+  test('rounds an exact halfway quotient up at the eighteenth significant digit', async () => {
+    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response('{"isValid":true,"amount":123456789012345678.50,"estimatedAmount":1,"fees":{"total":0}}') })
+    expect((await protocol.quoteBuy(OPTIONS)).rate).toBe('123456789012345679')
+  })
+
+  test.each(['buy', 'sell'].flatMap(method => [
+    ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0xAbcdefABCDEFabcdefABCDEFabcdefABCDEFabcd', true],
+    ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0xabcdefabcdefabcdefabcdefabcdefabcdefabce', false],
+    ['TronAddressAbC', 'TronAddressAbC', true],
+    ['TronAddressAbC', 'tronaddressabc', false],
+    ['0xAbCd', '0xabcd', false],
+    ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', 'not-hex', false]
+  ].map(values => [method, ...values])))('%s compares address case %# correctly', async (method, address, override, accepted) => {
+    const { protocol, account } = setup({ network: 'ethereum' }, {
+      [`GET /v1/auth/signMessage?address=${address}`]: response({ message: 'dummy-challenge' })
+    })
+    account.getAddress.mockResolvedValue(address)
+    const field = method === 'buy' ? 'recipient' : 'refundAddress'
+    const pending = protocol[method]({ ...OPTIONS, [field]: override })
+    if (accepted) {
+      const assets = method === 'buy' ? 'asset-in=EUR&asset-out=ETH' : 'asset-in=ETH&asset-out=EUR'
+      const amount = method === 'buy' ? 'amount-in' : 'amount-out'
+      expect(await pending).toEqual({ [`${method}Url`]: `https://app.dfx.swiss/${method}?session=dummy-session&lang=en&${assets}&blockchain=Ethereum&${amount}=100` })
+      expect(account.sign).toHaveBeenCalledWith('dummy-challenge')
+    } else {
+      await failure(pending, ValueError, `${field} must match the account address`)
+      expect(account.sign.mock.calls).toEqual([])
+    }
+  })
+
+  test.each(['injected', 'ambient'])('binds %s fetch to the global object', async mode => {
+    const implementation = function () {
+      if (this !== globalThis && this !== undefined) throw new ValueError('Illegal fetch receiver')
+      return Promise.resolve(response([]))
+    }
+    const fetch = mode === 'ambient' ? jest.spyOn(globalThis, 'fetch').mockImplementation(implementation) : jest.fn(implementation)
+    const protocol = new DfxProtocol(undefined, mode === 'ambient' ? {} : { fetch })
+    expect(await protocol.getSupportedCountries()).toEqual([])
+    expect(fetch.mock.contexts).toEqual([globalThis])
+    request(fetch, '/v1/country', 'GET')
+  })
+
+  test.each(['asset', 'fiat'].flatMap(kind => [null, true, [], {}, { buyable: false, sellable: false, id: -1 }, { buyable: 'true' }].map(row => [kind, row])))('ignores non-tradable %s row %# before validation', async (kind, row) => {
+    const { protocol } = setup({}, { [`GET /v1/${kind}`]: response([row]) })
+    expect(await protocol[kind === 'asset' ? 'getSupportedCryptoAssets' : 'getSupportedFiatCurrencies']()).toEqual([])
+  })
+
+  test.each(['asset', 'fiat'])('resolves a historical inactive %s row among malformed unrelated rows', async kind => {
+    const rows = kind === 'asset' ? DUMMY_ASSETS : DUMMY_FIAT
+    const { protocol } = setup({}, {
+      [`GET /v1/${kind}`]: response([null, {}, { buyable: true, id: 'unrelated' }, { ...rows[0], buyable: false, sellable: false }])
+    })
+    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+  })
+
+  test.each([true, false])('validates the historical matched row with ID lookup = %s', async byId => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], buyable: undefined }]),
+      'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, outputAssetId: byId ? 1 : undefined })
+    })
+    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+  })
+
+  test('resolves a historical fallback past null and unrelated catalog rows', async () => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([null, {}, { ...DUMMY_ASSETS[0], buyable: false, sellable: false }]),
+      'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, outputAssetId: undefined })
+    })
+    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+  })
+
   test('lists assets available in either direction and excludes missing decimals', async () => {
     const { protocol, fetch } = setup()
     expect(await protocol.getSupportedCryptoAssets()).toEqual([
@@ -122,11 +256,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   test.each([
-    ['quoteBuy', 'buy', { fiatAmount: 10000n }, 'amount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000000000000001' }],
-    ['quoteBuy', 'buy', { cryptoAmount: 50000000000000000n }, 'targetAmount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000000000000001' }],
-    ['quoteSell', 'sell', { cryptoAmount: 50000000000000000n }, 'amount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '800' }],
-    ['quoteSell', 'sell', { fiatAmount: 10000 }, 'targetAmount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '800' }]
-  ])('%s maps %j with exact request and response units', async (method, direction, amount, field, literal, expected) => {
+    ['quoteBuy', 'buy', { fiatAmount: 10000n }, 'amount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
+    ['quoteBuy', 'buy', { cryptoAmount: 50000000000000000n }, 'targetAmount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
+    ['quoteSell', 'sell', { cryptoAmount: 50000000000000000n }, 'amount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
+    ['quoteSell', 'sell', { fiatAmount: 10000 }, 'targetAmount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }]
+  ])('%s maps amount case %# with exact request and response units', async (method, direction, amount, field, literal, expected) => {
     const { protocol, fetch, account } = setup({ wallet: 'dummy-partner' })
     expect(await protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amount })).toEqual(expected)
     const payment = direction === 'buy' ? ',"paymentMethod":"Bank"' : ''
@@ -142,7 +276,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ['buy', { cryptoAmount: 50000000000000000n }, 'amount-out=0.05', 'EUR', 'ETH'],
     ['sell', { cryptoAmount: 50000000000000000n }, 'amount-in=0.05', 'ETH', 'EUR'],
     ['sell', { fiatAmount: 10000 }, 'amount-out=100', 'ETH', 'EUR']
-  ])('%s builds the correct URL amount side for %j', async (method, amount, parameter, assetIn, assetOut) => {
+  ])('%s builds the correct URL amount side for case %#', async (method, amount, parameter, assetIn, assetOut) => {
     const { protocol, fetch, account } = setup({ environment: 'sandbox', network: 'ethereum', wallet: 'dummy-partner', publicKey: 'dummy-public-key', language: 'de' })
     expect(await protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amount })).toEqual({
       [`${method}Url`]: `https://dev.app.dfx.swiss/${method}?session=dummy-session&lang=de&asset-in=${assetIn}&asset-out=${assetOut}&blockchain=Ethereum&${parameter}`
@@ -201,11 +335,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     request(fetch, '/v1/buy/quote', 'PUT', '{"currency":{"name":"EUR"},"asset":{"id":3},"specialCode":"","paymentMethod":"Bank","amount":100}')
   })
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'])('%s rejects missing and simultaneous amounts', async method => {
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    [{}, { fiatAmount: 1n, cryptoAmount: 1n }].map(amounts => [method, amounts])
+  ))('%s rejects invalid amount selection %#', async (method, amounts) => {
     const { protocol } = setup({ network: 'ethereum' })
-    for (const amounts of [{}, { fiatAmount: 1n, cryptoAmount: 1n }]) {
-      await failure(protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amounts }), ValueError, 'Exactly one of fiatAmount and cryptoAmount must be supplied')
-    }
+    await failure(protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amounts }), ValueError, 'Exactly one of fiatAmount and cryptoAmount must be supplied')
   })
 
   test.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, 0n, -1n])('rejects invalid amount %s', async amount => {
@@ -282,30 +416,41 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Missing quote validity', ProviderErrorReason.INTERNAL_SERVER_ERROR)
   })
 
+  test.each([null, [], true].map(body => [body]))('rejects a non-object quote response %#', async body => {
+    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body) })
+    await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+  })
+
   test.each([
     ['3', '0.333333333333333333'], ['6', '0.166666666666666667'], ['1e-20', '100000000000000000000'],
     ['1e20', '0.00000000000000000001'], ['1.25e-30', '800000000000000000000000000000'],
-    ['0.000000000000000003', '333333333333333333']
-  ])('rounds reciprocal rate %s to 18 significant places without exponent notation', async (rate, expected) => {
-    const { protocol } = setup({}, { 'PUT /v1/sell/quote': response(`{"isValid":true,"amount":0.05,"estimatedAmount":100,"rate":${rate},"feesTarget":{"total":1}}`) })
-    expect(await protocol.quoteSell(OPTIONS)).toEqual({ cryptoAmount: 50000000000000000n, fiatAmount: 10000n, fee: 100n, rate: expected })
+    ['0.000000000000000003', '333333333333333333'], ['1', '1'], ['0.5', '2'],
+    ['0.9999999999999999999', '1']
+  ])('divides response amounts with denominator %s to 18 significant places', async (amount, expected) => {
+    const { protocol } = setup({}, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], decimals: 40 }]),
+      'PUT /v1/sell/quote': response(`{"isValid":true,"amount":${amount},"estimatedAmount":1,"rate":7,"feesTarget":{"total":0}}`)
+    })
+    expect((await protocol.quoteSell(OPTIONS)).rate).toBe(expected)
   })
 
-  test.each([0, -1])('rejects nonpositive sell rate %s', async rate => {
-    const { protocol } = setup({}, { 'PUT /v1/sell/quote': response({ isValid: true, amount: 1, estimatedAmount: 100, rate, feesTarget: { total: 1 } }) })
-    await failure(protocol.quoteSell(OPTIONS), ProviderError, 'DFX rate must be positive', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+  test.each(['buy', 'sell'].flatMap(direction => ['amount', 'estimatedAmount'].flatMap(field =>
+    [0, -1].map(value => [direction, field, value])
+  )))('rejects nonpositive %s response %s = %s', async (direction, field, value) => {
+    const { protocol } = setup({}, { [`PUT /v1/${direction}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 100, [field]: value }) })
+    await failure(protocol[direction === 'buy' ? 'quoteBuy' : 'quoteSell'](OPTIONS), ProviderError, 'DFX quote amounts must be positive', ProviderErrorReason.INTERNAL_SERVER_ERROR)
   })
 
   test.each([
-    ['estimatedAmount', '0.0000000000000000001'], ['amount', '1.001'], ['amount', '-1']
+    ['estimatedAmount', '0.0000000000000000001'], ['amount', '1.001'], ['fees', { total: '-1' }]
   ])('rejects fractional or negative smallest units in %s', async (field, value) => {
     const body = { isValid: true, amount: '100', estimatedAmount: '0.05', rate: '2000', fees: { total: '1' }, [field]: value }
     const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body) })
     await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'DFX amount is not a non-negative integer in smallest units', ProviderErrorReason.INTERNAL_SERVER_ERROR)
   })
 
-  test.each([undefined, 'NaN', '01', true])('rejects malformed quote decimals %s', async rate => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, rate }) })
+  test.each([undefined, 'NaN', '01', true])('rejects malformed quote decimals %s', async amount => {
+    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount, estimatedAmount: 1 }) })
     await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
   })
 
@@ -329,19 +474,15 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ['getSupportedCryptoAssets', 'GET /v1/asset'],
     ['getSupportedFiatCurrencies', 'GET /v1/fiat'],
     ['getSupportedCountries', 'GET /v1/country']
-  ])('%s treats HTTP 400 and 422 as provider failures', async (method, route) => {
-    for (const status of [400, 422]) {
-      const { protocol } = setup({}, { [route]: response({ message: 'dummy-validation-error' }, status) })
-      await failure(protocol[method](), ProviderError, 'dummy-validation-error', 'INTERNAL_SERVER_ERROR')
-    }
+  ].flatMap(([method, route]) => [400, 422].map(status => [method, route, status])))('%s treats list validation response %# as a provider failure', async (method, route, status) => {
+    const { protocol } = setup({}, { [route]: response({ message: 'dummy-validation-error' }, status) })
+    await failure(protocol[method](), ProviderError, 'dummy-validation-error', 'INTERNAL_SERVER_ERROR')
   })
 
-  test.each(['quoteBuy', 'quoteSell'])('%s maps HTTP 400 and 422 to invalid input', async method => {
-    for (const status of [400, 422]) {
-      const route = method === 'quoteBuy' ? 'PUT /v1/buy/quote' : 'PUT /v1/sell/quote'
-      const { protocol } = setup({}, { [route]: response({ message: 'Invalid amount' }, status) })
-      await failure(protocol[method](OPTIONS), ValueError, 'Invalid amount')
-    }
+  test.each(['quoteBuy', 'quoteSell'].flatMap(method => [400, 422].map(status => [method, status])))('%s maps HTTP %s to invalid input', async (method, status) => {
+    const route = method === 'quoteBuy' ? 'PUT /v1/buy/quote' : 'PUT /v1/sell/quote'
+    const { protocol } = setup({}, { [route]: response({ message: 'Invalid amount' }, status) })
+    await failure(protocol[method](OPTIONS), ValueError, 'Invalid amount')
   })
 
   test('maps a rejected transaction UID to ValueError', async () => {
@@ -431,9 +572,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   test.each([
     ['getSupportedCryptoAssets', 'GET /v1/asset', {}],
     ['getSupportedFiatCurrencies', 'GET /v1/fiat', null],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [null]],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [true]],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [[]]],
     ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], name: '' }]],
     ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], buyable: undefined }]],
     ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], sellable: undefined }]],
@@ -441,8 +579,9 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ['getSupportedCountries', 'GET /v1/country', {}],
     ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], bankAllowed: 'true' }]],
     ['getSupportedCountries', 'GET /v1/country', [null]],
+    ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], symbol: false }]],
     ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], symbol: '' }]]
-  ])('%s rejects malformed metadata', async (method, route, body) => {
+  ])('%s rejects malformed metadata case %#', async (method, route, body) => {
     const { protocol } = setup({}, { [route]: response(body) })
     await failure(protocol[method](), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
   })
@@ -595,29 +734,33 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature"${chain},"key":"dummy-public-key"}`)
   })
 
-  test.each(['buy', 'sell', 'getTransactionDetail'])('%s wraps non-allowlisted errors from sign and getAddress with their cause', async method => {
-    for (const operation of ['sign', 'getAddress']) {
-      const cause = new NotImplementedError('dummy-operation')
-      const { protocol, account } = setup({ network: 'ethereum' })
-      account[operation].mockRejectedValue(cause)
-      const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
-      expect(error.cause).toBe(cause)
-      expect(account[operation]).toHaveBeenCalledWith(...(operation === 'sign' ? ['[dev]_Sign this exact message'] : []))
-    }
+  test.each(['buy', 'sell', 'getTransactionDetail'].flatMap(method => ['sign', 'getAddress'].map(operation => [method, operation])))('%s wraps non-allowlisted errors from %s with their cause', async (method, operation) => {
+    const cause = new NotImplementedError('dummy-operation')
+    const { protocol, account } = setup({ network: 'ethereum' })
+    account[operation].mockRejectedValue(cause)
+    const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+    expect(error.cause).toBe(cause)
+    expect(account[operation]).toHaveBeenCalledWith(...(operation === 'sign' ? ['[dev]_Sign this exact message'] : []))
   })
 
   test.each([
     ['buy', new AccountRequiredError('dummy-allowed')],
+    ['buy', new ValueError('dummy-allowed')],
+    ['buy', new ProviderRequiredError('dummy-allowed')],
+    ['buy', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })],
     ['buy', new BuyError('dummy-allowed', { reason: 'INSUFFICIENT_FUNDS' })],
     ['buy', new MaximumFeeExceededError('dummy-allowed')],
     ['sell', new SellError('dummy-allowed', { reason: 'INSUFFICIENT_FUNDS' })],
+    ['sell', new AccountRequiredError('dummy-allowed')],
+    ['sell', new MaximumFeeExceededError('dummy-allowed')],
+    ['sell', new ProviderRequiredError('dummy-allowed')],
+    ['sell', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })],
     ['sell', new ValueError('dummy-allowed')],
-    ['getTransactionDetail', new NoSuchElementError('dummy-allowed')],
     ['getTransactionDetail', new ProviderRequiredError('dummy-allowed')],
     ['getTransactionDetail', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })]
-  ])('%s preserves errors declared by its own contract', async (method, cause) => {
+  ].flatMap(([method, cause]) => ['getAddress', 'sign'].map(operation => [method, cause, operation])))('%s preserves exact allowlisted error case %#', async (method, cause, operation) => {
     const { protocol, account } = setup({ network: 'ethereum' })
-    account.sign.mockRejectedValue(cause)
+    account[operation].mockRejectedValue(cause)
     const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), cause.constructor, 'dummy-allowed', cause.reason)
     expect(error).toBe(cause)
   })
@@ -625,7 +768,12 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   test.each([
     ['buy', new SellError('dummy-disallowed', { reason: 'INSUFFICIENT_FUNDS' })],
     ['sell', new BuyError('dummy-disallowed', { reason: 'INSUFFICIENT_FUNDS' })],
-    ['getTransactionDetail', new ReadOnlyAccountRequiredError('dummy-disallowed')]
+    ['buy', new ReadOnlyAccountRequiredError('dummy-disallowed')],
+    ['sell', new ReadOnlyAccountRequiredError('dummy-disallowed')],
+    ['getTransactionDetail', new ReadOnlyAccountRequiredError('dummy-disallowed')],
+    ['getTransactionDetail', new ValueError('dummy-disallowed')],
+    ['getTransactionDetail', new NoSuchElementError('dummy-disallowed')],
+    ['getTransactionDetail', null]
   ])('%s wraps WDK errors absent from its contract', async (method, cause) => {
     const { protocol, account } = setup({ network: 'ethereum' })
     account.sign.mockRejectedValue(cause)

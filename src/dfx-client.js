@@ -38,7 +38,7 @@ export default class DfxClient {
       let response
       let text
       try {
-        response = await this._fetch(`${this._base}${path}`, { method, headers, body, signal: controller.signal })
+        response = await this._fetch.call(globalThis, `${this._base}${path}`, { method, headers, body, signal: controller.signal })
         text = await response.text()
       } catch (cause) {
         throw new ProviderError(controller.signal.aborted ? 'DFX request timed out' : 'DFX network request failed', {

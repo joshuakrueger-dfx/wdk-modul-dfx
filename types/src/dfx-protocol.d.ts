@@ -18,46 +18,68 @@ export interface DfxProtocolConfig {
     environment?: 'production' | 'sandbox';
     /** Partner identifier supplied by the wallet developer. No default. */
     wallet?: string;
-    /** Lowercase DFX blockchain name binding the account to its chain. No default. */
+    /** Non-empty DFX blockchain name binding the account to its chain; case-insensitive. No default. */
     network?: string;
     /** Public key sent as key during authentication. No default. */
     publicKey?: string;
     /** Widget language code. Defaults to en. */
     language?: string;
-    /** HTTP implementation. Defaults to globalThis.fetch. */
+    /** HTTP implementation, called with globalThis as receiver. Defaults to globalThis.fetch. */
     fetch?: typeof fetch;
-    /** HTTP request deadline in milliseconds. Defaults to 30000. */
+    /** Finite positive HTTP request deadline in milliseconds. Defaults to 30000. */
     timeout?: number;
 }
 
 /** Per-operation network selection. */
 export interface DfxTradeConfig {
-    /** Lowercase DFX blockchain name. Defaults to the constructor network. */
+    /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. */
     network?: string;
 }
 
-/** Purchase options with an optional network selection. */
+/** Purchase options with case-insensitive tickers/network and EVM checksum address equivalence. */
 export type DfxBuyOptions = BuyOptions & { config?: DfxTradeConfig };
-/** Sale options with an optional network selection. */
+/** Sale options with case-insensitive tickers/network and EVM checksum address equivalence. */
 export type DfxSellOptions = SellOptions & { config?: DfxTradeConfig };
 
 /** Provides DFX fiat quotes, widget URLs and transaction status. */
 export default class DfxProtocol extends FiatProtocol {
-    /** Creates an account-free interface. Throws ValueError for an unknown environment. */
+    /** Creates an account-free interface. Throws ValueError for invalid configuration. */
     constructor(account?: undefined, config?: DfxProtocolConfig);
-    /** Creates a read-only interface. Throws ValueError for an unknown environment. */
+    /** Creates a read-only interface. Throws ValueError for invalid configuration. */
     constructor(account: IWalletAccountReadOnly, config?: DfxProtocolConfig);
-    /** Creates a signing interface. Throws ValueError for an unknown environment. */
+    /** Creates a signing interface. Throws ValueError for invalid configuration. */
     constructor(account: IWalletAccount, config?: DfxProtocolConfig);
-    /** Generates a fresh purchase URL. Requires a signing account and constructor network. */
+    /**
+     * Generates a fresh purchase URL. Requires a signing account and constructor network.
+     * Throws ValueError for invalid options. Exact account error constructors passed through:
+     * AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, BuyError, MaximumFeeExceededError.
+     * Other account errors, including subclasses, become ProviderError with the original cause.
+     */
     buy(options: DfxBuyOptions): Promise<BuyResult>;
-    /** Quotes a purchase; amounts and fee use smallest units, rate is fiat per crypto. */
+    /**
+     * Quotes a purchase; amounts and fee use smallest units. Rate is response fiat / crypto
+     * in display units, including fees, rounded half up to 18 significant digits without an exponent.
+     * Throws ValueError for invalid options and ProviderError for malformed or nonpositive response amounts.
+     */
     quoteBuy(options: DfxBuyOptions): Promise<FiatQuote>;
-    /** Generates a fresh sale URL. Requires a signing account and constructor network. */
+    /**
+     * Generates a fresh sale URL. Requires a signing account and constructor network.
+     * Throws ValueError for invalid options. Exact account error constructors passed through:
+     * AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, SellError, MaximumFeeExceededError.
+     * Other account errors, including subclasses, become ProviderError with the original cause.
+     */
     sell(options: DfxSellOptions): Promise<SellResult>;
-    /** Quotes a sale; amounts and fee use smallest units, rate is fiat per crypto. */
+    /**
+     * Quotes a sale; amounts and fee use smallest units. Rate is response fiat / crypto
+     * in display units, including fees, rounded half up to 18 significant digits without an exponent.
+     * Throws ValueError for invalid options and ProviderError for malformed or nonpositive response amounts.
+     */
     quoteSell(options: DfxSellOptions): Promise<FiatQuote>;
-    /** Retrieves by UID, renewing an expired session once. Requires authentication. */
+    /**
+     * Retrieves by UID, renewing an expired session once. Resolves inactive catalog entries too.
+     * Requires authentication; only exact ProviderRequiredError and ProviderError account errors pass through.
+     * Other account errors become ProviderError with cause; ValueError and NoSuchElementError describe the UID/API result only.
+     */
     getTransactionDetail(txId: string): Promise<FiatTransactionDetail>;
     /** Lists assets tradable in either direction with known decimals. */
     getSupportedCryptoAssets(): Promise<SupportedCryptoAsset[]>;
