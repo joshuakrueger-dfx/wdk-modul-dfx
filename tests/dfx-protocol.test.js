@@ -161,43 +161,75 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     }
   })
 
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method => [
+    ['Eth', ['ETH', 'eth']],
+    ['ETH', ['ETH', 'ETH']]
+  ].map(values => [method, ...values])))('%s rejects unresolved asset spelling on one network %#', async (method, name, names) => {
+    const { protocol } = setup({ network: 'ethereum' }, {
+      'GET /v1/asset': response(names.map((name, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name, blockchain: index === 0 ? 'Ethereum' : 'ETHEREUM' })))
+    })
+    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: name }), ValueError,
+      `Ambiguous asset spelling ${name} on network ethereum`)
+  })
+
   test.each(['quoteBuy', 'quoteSell'].flatMap(method => [
-    ['Eth', ['ETH', 'eth'], ['Ethereum', 'Ethereum']],
-    ['ETH', ['ETH', 'ETH'], ['Ethereum', 'Ethereum']],
-    ['ETH', ['ETH', 'eth'], ['Ethereum', 'Tron']]
-  ].map(values => [method, ...values])))('%s rejects unresolved asset collisions %#', async (method, name, names, chains) => {
+    ['Eth', ['ETH', 'eth'], ['Ethereum', 'Ethereum'], 'Ambiguous asset spelling Eth on network ethereum'],
+    ['ETH', ['ETH', 'eth'], ['Ethereum', 'Tron'], 'Ambiguous asset ETH; configure network: ethereum, tron'],
+    ['ETH', ['ETH', 'eth', 'ETH'], ['Ethereum', 'ETHEREUM', 'Tron'], 'Ambiguous asset ETH; configure network: ethereum, tron']
+  ].map(values => [method, ...values])))('%s rejects unresolved asset collisions without a network %#', async (method, name, names, chains, message) => {
     const { protocol } = setup({}, {
       'GET /v1/asset': response(names.map((name, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name, blockchain: chains[index] })))
     })
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: name }), ValueError,
-      `Ambiguous asset ${name}; configure network: ${chains.map(chain => chain.toLowerCase()).join(', ')}`)
+    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: name }), ValueError, message)
   })
 
   test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
     ['EUR', 'eur'].map(name => [method, name])
-  ))('%s prefers the unique exact fiat spelling %s', async (method, name) => {
+  ))('%s matches input %s to the uppercase fiat catalog entry and excludes lowercase rows', async (method, name) => {
     const { protocol, fetch } = setup({ network: 'ethereum' }, {
       'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], id: 18, name: 'eur' }, DUMMY_FIAT[0]])
     })
     const result = await protocol[method]({ ...OPTIONS, fiatCurrency: name })
     if (method.startsWith('quote')) {
       const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
-      expect(body.currency).toEqual({ name })
+      expect(body.currency).toEqual({ name: 'EUR' })
       expect(result.fiatAmount).toBe(10000n)
     } else {
       const url = new URL(result[`${method}Url`])
-      expect(url.searchParams.get(method === 'buy' ? 'asset-in' : 'asset-out')).toBe(name)
+      expect(url.searchParams.get(method === 'buy' ? 'asset-in' : 'asset-out')).toBe('EUR')
       expect(url.searchParams.get(method === 'buy' ? 'amount-in' : 'amount-out')).toBe('100')
     }
   })
 
   test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method => [
-    ['Eur', ['EUR', 'eur']], ['EUR', ['EUR', 'EUR']]
+    ['Eur', ['EUR', 'EUR']], ['EUR', ['EUR', 'EUR']]
   ].map(values => [method, ...values])))('%s rejects unresolved fiat collisions %#', async (method, name, names) => {
     const { protocol } = setup({ network: 'ethereum' }, {
       'GET /v1/fiat': response(names.map((name, index) => ({ ...DUMMY_FIAT[0], id: index + 11, name })))
     })
     await failure(protocol[method]({ ...OPTIONS, fiatCurrency: name }), ValueError, `Ambiguous fiat currency: ${name}`)
+  })
+
+  test('excludes fiat catalog names without an exact uppercase ISO table entry', async () => {
+    const { protocol } = setup({}, {
+      'GET /v1/fiat': response([
+        { ...DUMMY_FIAT[0], id: 18, name: 'eur' },
+        { ...DUMMY_FIAT[0], id: 19, name: 'Eur' },
+        DUMMY_FIAT[0]
+      ])
+    })
+    expect(await protocol.getSupportedFiatCurrencies()).toEqual([{ code: 'EUR', decimals: 2 }])
+  })
+
+  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
+    ['eur', 'EUR'].map(name => [method, name])
+  ))('%s rejects input %s when only a lowercase fiat catalog row exists', async (method, name) => {
+    const { protocol, fetch } = setup({ network: 'ethereum' }, {
+      'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], name: 'eur' }])
+    })
+    await failure(protocol[method]({ ...OPTIONS, fiatCurrency: name }), ValueError,
+      `Unsupported ${method.toLowerCase().includes('buy') ? 'buy' : 'sell'} fiat currency: ${name}`)
+    expect(fetch.mock.calls.map(([, init]) => init.method)).toEqual(['GET', 'GET'])
   })
 
   test.each(['NewChain2', 'New-Chain2/?&'])('lists a future blockchain value %s', async blockchain => {
@@ -218,7 +250,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
   })
 
-  test.each(['', 'New Chain', 'Chain\t2', 'Chain\n2', 'Chain\u00002', 'Chain\u007f2', 'Chain\u00852'])('rejects empty, whitespace or control characters in blockchain %#', async blockchain => {
+  test.each(['', 'New Chain', 'Chain\t2', 'Chain\n2', 'Chain\u00002', 'Chain\u007f2', 'Chain\u00852', 'Chain\u200b2', 'Chain\u202e2'])('rejects empty blockchain names or whitespace, control and format characters %#', async blockchain => {
     const { protocol } = setup({}, {
       'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain }])
     })

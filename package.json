@@ -12,6 +12,9 @@
   "license": "Apache-2.0",
   "main": "index.js",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "types": "./types",
   "scripts": {
     "build:types": "tsc",

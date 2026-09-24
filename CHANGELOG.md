@@ -28,7 +28,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   retain DFX spelling. EVM address comparisons accept checksum case differences.
 - Account error allowlists require exact constructors; transaction details pass
   through only ProviderRequiredError and ProviderError from account operations.
-- Document Node.js ≥ 22 and Bare support, the CI coverage gate, known limitations
+- Declare Node.js ≥ 22 and document testing on Node.js 22.22.0 (CI) and Bare, the CI coverage gate, known limitations
   and permanent sandbox user creation by authenticated integration tests.
 
 ### Fixed
@@ -36,12 +36,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Bind injected and ambient fetch to the global receiver.
 - Reject invalid configuration, timeout, string options and trade options with ValueError.
 - Reject timeouts above 2147483647 ms and invalid per-operation config objects/networks.
-- Prefer a unique exact spelling for asset collisions on one network and fiat
-  currency collisions; reject unresolved ambiguity instead of selecting the first currency.
-- Resolve ISO fiat minor units independently of catalog name casing.
+- Prefer a unique exact spelling for asset collisions on one network; reject
+  unresolved asset ambiguity and multiple matching fiat catalog rows.
+- Resolve ISO fiat minor units by exact uppercase catalog names; exclude rows
+  without a table entry while matching user input case-insensitively.
 - Filter inactive catalog rows before validation; resolve historical rows from
   unfiltered catalogs and validate only the matched entries.
-- Accept future blockchain names as non-empty strings without whitespace or control characters.
+- Accept future blockchain names as non-empty strings without whitespace, control or format characters.
 - Cover ProviderError subclasses from account operations with transaction-detail wrapping tests.
 - Re-export IFiatProtocol as a declaration value; maintain updated declarations by hand.
 - Remove per-token suffix slicing from JSON number parsing.

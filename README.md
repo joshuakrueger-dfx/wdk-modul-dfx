@@ -10,9 +10,9 @@ in the DFX widget; this module does not execute trades or hold funds.
 ## Compatibility
 
 Implements `IFiatProtocol` by extending `FiatProtocol` from
-`@tetherto/wdk-wallet`, with compatibility range `^1.0.0-beta.19`.
+`@tetherto/wdk-wallet`; tested against `1.0.0-beta.19`, with declared dependency range `^1.0.0-beta.19` (not a tested compatibility matrix).
 
-ES modules; supports Node.js ≥ 22 (CI: 22.22.0) and Bare. The Bare entry point
+ES modules. Tested on Node.js 22.22.0 (CI) and Bare. The Bare entry point
 loads `bare-node-runtime/global`. HTTP uses `fetch` or an injected implementation.
 The module receives a WDK account from its caller and does not depend directly on
 `@tetherto/wdk` or any specific chain wallet package. Use one installed copy of
@@ -169,12 +169,15 @@ A ticker can occur on multiple networks. Without a network, ambiguous tickers
 throw `ValueError` listing the candidate networks. Lists include assets and
 currencies that are buyable **or** sellable. Each trading method additionally
 requires availability in its own direction. Fiat minor units come from the
-module's ISO 4217 table; unknown currencies are excluded and rejected in trades.
+module's ISO 4217 table, keyed by exact uppercase catalog names; currencies without
+an exact table entry are excluded from lists and trade selection.
 Rows with neither `buyable === true` nor `sellable === true` are discarded before
 validation. Tradable rows remain strictly validated; malformed metadata is a
 provider error rather than a silently omitted trading asset.
-For case-insensitive asset collisions on the same network or currency collisions,
+For case-insensitive asset collisions on the same network,
 a unique exact spelling wins; otherwise the trade fails with `ValueError`.
+Multiple matching fiat catalog rows fail with `ValueError`, including duplicate
+rows with the same uppercase ISO name.
 
 Country availability uses `bankAllowed` for **both** directions. Treating this
 nondirectional flag as buy and sell availability is an assumption; `cardAllowed`
@@ -262,9 +265,9 @@ same fallback.
 
 ## Known limitations
 
-- Four assets without `decimals` are excluded from supported lists and rejected
-  in trades: Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO. They require
-  API-supplied decimals; there is no crypto fallback table.
+- The module excludes every asset without `decimals` from supported lists and
+  rejects it in trades. At publication, the DFX API omits `decimals` for
+  Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO; there is no crypto fallback table.
 - Ambiguous tickers without a network are rejected.
 - HTTP 429 and account-state failures provisionally map to `INTERNAL_SERVER_ERROR`.
 - A `recipient` or `refundAddress` differing from the account address is rejected.
@@ -273,7 +276,9 @@ same fallback.
 - `networkCode` is `blockchain.toLowerCase()`; no chain aliases are translated.
 - For non-EVM authentication, the module sends the signature supplied by the
   account. Whether it matches the format DFX verifies for that chain depends on
-  the wallet package. EVM signing has been tested.
+  the wallet package. For EVM accounts, tests verify that signing the DFX challenge
+  produces a signature compatible with the backend's EVM verification procedure
+  (`verifyMessage` under EIP-191). End-to-end login is not part of the test suite.
 
 ## Security
 
