@@ -50,7 +50,8 @@
   "standard": {
     "ignore": [
       "bare.js",
-      "tests/**/*.js"
+      "tests/**/*.js",
+      "e2e/**"
     ]
   },
   "repository": {
