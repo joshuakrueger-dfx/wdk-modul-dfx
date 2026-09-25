@@ -4,7 +4,7 @@ This document records how `@dfx.swiss/wdk-protocol-fiat-dfx` was verified, what 
 does not prove. Every result below was produced by running the named command. Nothing is inferred from reading code
 unless it says so.
 
-- **Date:** 2026-09-24
+- **Date:** 2026-09-24 (sections 1–5), 2026-09-25 (sections 6–8)
 - **Module under test:** this repository, `feat/module` at commit `0be1b6d` (library code). The `e2e/` tooling was added
   on top without touching `src/`, `types/` or `tests/`.
 - **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
@@ -29,6 +29,10 @@ unless it says so.
 | Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 7/7 journeys, 0 page errors |
 | After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps |
 | Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Lightning, Arkade, Firo listed and quoted in sandbox and production |
+| Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
+| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | buy and sell reach an automatic AML `Pass`; rejection and refund reach `Returned`; the module status matches every DFX state observed |
+| KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
+| Deployed ERC-4337 account | `cd e2e && node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
 
@@ -145,18 +149,88 @@ No WDK wallet package exists for Lightning, Arkade or Firo, so no WDK user can c
 `e2e/native-quotes.mjs` confirms that the module still lists them (8 decimals via the native fallback) and quotes them
 in sandbox and production. A Firo sell of 0.01 FIRO is correctly rejected as `AmountTooLow` with DFX's minimum.
 
+## 6. Real backend processing (2026-09-25)
+
+For these runs the local API was restarted with selected background jobs **enabled** (list in
+[`e2e/README.md`](e2e/README.md)). Everything that talks to the outside world (blockchain scanning and payout, bank
+transmission, pricing and liquidity) stayed off. Only external events are simulated:
+- an incoming bank transfer (a `bank_tx` row with `senderAccount`, as the bank import writes it);
+- a blockchain confirmation of a crypto deposit;
+- a completed identification (KYC level 50, `verifiedName`, current `lastNameCheckDate`);
+- the bank's execution of a refund.
+
+Everything else is done by the backend or through the real admin endpoints that DFX operations use.
+
+**Sell matching through the backend** (`fullstack-processing.mjs`). A crypto deposit is written as the blockchain scan
+would write it. The `BuyFiat` job then registers it about 60 s later, creates the sale, and sets our
+`externalTransactionId` on the transaction through `findAndComplete`. The module returns `in_progress`. A second
+deposit 10 % above the quoted amount is assigned to the route but not to the request, and the module returns
+`NoSuchElementError` for that ID.
+
+**Lifecycle** (`fullstack-lifecycle.mjs`, `OBSERVE_MINUTES=15`). DFX state as returned by the API against the module's
+status, at each observed change:
+
+| Scenario | Event | DFX state | Module |
+| --- | --- | --- | --- |
+| Buy A | bank transfer assigned by admin | `Created` → `Processing` → `CheckPending` | `in_progress` |
+| Buy A | bank data verified by the backend job, phone check recorded, `reviewReset` | `Created` → `LiquidityPending` (AML `Pass`, automatic) | `in_progress` |
+| Buy B (separate user) | bank transfer assigned by admin | `CheckPending` | `in_progress` |
+| Buy B | compliance rejects via `PUT /v1/buyCrypto/:id/amlCheck` | `Failed` | `failed` |
+| Buy B | refund approved with creditor data | `ReturnPending` | `in_progress` |
+| Buy B | refund executed by the bank (simulated) | `Returned` | `failed` |
+| Sell | deposit registered by the backend, blockchain confirmation | `Created` → `Processing` (AML `Pass`, automatic) | `in_progress` |
+
+Both buy and sell reach an automatic AML `Pass`. After that the backend waits for liquidity (buy, `LiquidityPending`) or
+for a fiat output (sell, `Processing`). Both need the pricing and liquidity jobs, which talk to real exchanges and stay
+off, so `completed` through the real pipeline is not reached. The `completed` mapping is covered by section 4, where
+the completion fields are set directly.
+
+Wallet-visible note: during a refund the status goes `failed` → `in_progress` → `failed`, because `ReturnPending` counts
+as in progress (build spec, decision E7).
+
+The runs surfaced these DFX rules. They had to be satisfied the way operations satisfies them, and none of them is a
+module issue:
+- **An IBAN may be active on only one account**, so each scenario uses its own valid IBAN.
+- **An IP country differing from the residence country** requires a recorded phone check (`ManualCheckIpCountryPhone`).
+- **Sender bank data** is created by the backend from `bank_tx.senderAccount` (type `BankIn`), then verified by the
+  `BankDataVerification` job. `PUT /v1/bankData/:id` without `status` puts non-`User` bank data back into
+  `InternalReview`, which the AML job skips silently.
+- **An AML verdict, once written, is locked.** Compliance decisions go through `PUT /v1/buyCrypto/:id/amlCheck`.
+
+Two backend robustness findings (DFX backend, not this module):
+- `UserRepository.getNextRef` (`user.repository.ts:67-75`) throws `Cannot read properties of null (reading 'ref')` when no
+  user has a numeric referral code yet. On a fresh database this breaks both the AML check and `PUT /v1/userData/:id` for
+  users at KYC level 50. The test seeds one code, as every real database has.
+- `NameCheckService.classifyRiskData` throws `Cannot read properties of undefined (reading 'every')` on an empty
+  name-check provider response.
+
+## 7. KYC in the widget
+
+`kyc-widget.mjs` signs in a fresh wallet through the module, opens the buy widget, taps *Complete KYC*, and completes
+the DFX screens in the UI: e-mail with the confirmation code from the harness mail fixture (level 10), then personal
+data (level 20), then nationality. With the KYC jobs enabled, the next step is identification. There the backend calls
+Sumsub (`KycService.initiateStep` → `SumsubService.initiateIdent` → `createApplicant`), which is unreachable locally,
+and answers `PUT /v2/kyc` with 503. The same account then still quotes and opens the widget through the module at
+level 20.
+
+Wallet-visible note: on that 503 the widget loops on its *Continue* spinner instead of showing an error. This is DFX
+app behaviour.
+
+## 8. Deployed ERC-4337 account
+
+`safe-deployed.mjs` forks Polygon with `anvil`. It deploys the WDK smart account there without a bundler, using the
+package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's signature over
+a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner. Against the DFX
+sandbox, `quoteBuy`, `buy()` and `sell()` work with the deployed account, and both sessions belong to the owner address
+(`activeAddress` in `/v2/user` and the JWT `address` claim). A smart-account `recipient` is rejected. 13/13 steps.
+
 ## Not covered
 
-- **The KYC process itself.** The full-stack test sets the KYC level in the database; the widget's KYC screens are
-  DFX's own flow and are not part of this module.
-- **Automatic settlement.** Background jobs are off in the local stack. The bank transfer is assigned through the admin
-  endpoint, and completion is simulated by setting the `buy_crypto`/`buy_fiat` fields. Payout to a chain is not
-  exercised.
-- **Sell assignment through the backend.** There is no admin endpoint that turns a crypto deposit into a sale, and pay-in
-  processing needs blockchain access. The sell transaction is therefore written to the database with the external ID;
-  the module's status mapping is tested, the backend's sell-side matching is not. It uses the same `findAndComplete`
-  function that step 4 exercises for buying.
-- **A deployed ERC-4337 account.** Only counterfactual (not yet deployed) accounts were tested live. `@tetherto/wdk-wallet-evm-erc-4337`
-  signs messages via its owner account regardless of deployment (`wallet-account-evm-erc-4337.js`, `sign()`
-  delegates to `this._ownerAccount.sign`), so the sign-in path is the same; this is established from code, not run.
+- **Identification itself (Sumsub) and the external name check.** Both are external providers. The UI flow stops at
+  the identification call, and the lifecycle test simulates a completed identification.
+- **Payout and bank transmission.** Real crypto payout, SEPA payout and the pricing/liquidity jobs that precede them
+  talk to chains, banks and exchanges. The real pipeline therefore ends at `LiquidityPending` (buy) and `Processing`
+  (sell). `completed` is covered only with directly set completion fields (section 4).
+- **Deposit detection on a real chain.** The sale starts from a deposit row as the blockchain scan would write it; the
+  scan itself is not exercised.
 - **Real money.** No real transaction was executed in any environment.

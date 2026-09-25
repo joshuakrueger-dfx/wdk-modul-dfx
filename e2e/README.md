@@ -176,3 +176,65 @@ with the expected local `[loc]_` signing challenge.
 
 Results update atomically at `out/fullstack/results.json`; screenshots are under
 `out/fullstack/shots/`. Inspect per-step evidence and rendered screenshots.
+
+### Local full stack with backend processing
+
+`fullstack-processing.mjs` and `fullstack-lifecycle.mjs` need the same local stack,
+but with selected background jobs **enabled** so that the real backend code
+processes the transactions. Everything that talks to the outside world (blockchain
+scanning and payout, bank transmission, pricing and liquidity) stays disabled.
+Restart only the API service with a Compose override that sets
+`DISABLED_PROCESSES` to every value of the backend `Process` enum
+(`src/shared/services/process.service.ts`) **except**:
+
+```
+BuyCrypto, BuyFiat, AutoAmlCheck, BuyCryptoRefreshFee, BuyFiatSetFee,
+Kyc, KycNationalityReview, KycIdentReview, KycFinancialReview,
+KycDfxApproval, KycRecommendationReview, AutoCreateBankData, BankDataVerification
+```
+
+```sh
+node fullstack-processing.mjs > out/fullstack-processing.log 2>&1
+OBSERVE_MINUTES=15 node fullstack-lifecycle.mjs > out/fullstack-lifecycle.log 2>&1
+LIFECYCLE_SCENARIOS=sell OBSERVE_MINUTES=15 node fullstack-lifecycle.mjs
+```
+
+`fullstack-lifecycle.mjs` simulates only external events. These are: an incoming
+bank transfer (a `bank_tx` row as the bank import would write it, including
+`senderAccount`), a blockchain confirmation of a crypto deposit, a completed
+identification (KYC level 50, `verifiedName`, current `lastNameCheckDate`), and the
+execution of a payout or refund by the bank. Compliance and operations act through
+the real admin endpoints:
+- bank transfer assignment;
+- the phone-call check (`PUT /v1/userData/:id`);
+- `reviewReset`;
+- `PUT /v1/buyCrypto/:id/amlCheck`;
+- refund request and approval.
+
+The AML job needs about ten minutes per decision, so a full run takes 60–90
+minutes. The environment step seeds a numeric referral code when none exists (see
+`TESTING.md` for the backend finding behind it). Use a fresh IBAN per scenario: DFX
+allows an active IBAN on one account only, and the script generates valid ones.
+
+### KYC in the widget
+
+`kyc-widget.mjs` drives the DFX KYC screens in the local widget for a user who
+signed in through the module: e-mail with confirmation code, personal data,
+nationality. It stops where DFX calls the external identification provider
+(Sumsub), which does not exist locally. It needs the KYC jobs listed above.
+
+```sh
+node kyc-widget.mjs > out/kyc-widget.log 2>&1
+```
+
+### Deployed ERC-4337 account
+
+`safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. It deploys the
+WDK smart account there without a bundler and signs before and after
+deployment. It then uses the deployed account through the module against the
+DFX **sandbox** (`buy`, `sell` and session checks). It needs `anvil` on `PATH`;
+`ANVIL_PORT` defaults to 8547.
+
+```sh
+node safe-deployed.mjs > out/safe-deployed.log 2>&1
+```
