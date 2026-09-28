@@ -256,6 +256,27 @@ on-chain balance every 60 s:
 This is the first run in which every step between wallet and payout was real: sign-in, widget, account linking,
 bank transfer, DFX processing, on-chain payout and status reporting through the module.
 
+**Afterwards: swap and send with the same WDK wallet** (`e2e/real-swap-send.mjs`, 2026-09-28). This is not part of
+this module; it shows that the purchased funds can be used from the wallet.
+- **Plan (read only).** The swap of 0.00687295 ETH, keeping 0.0003 ETH for gas, was quoted at 18.19 USDC. The
+  implied price was 0.02 % from the Chainlink ETH/USD feed on Arbitrum. The recipient is a valid checksum address
+  (EOA).
+- **Swap.** [`0x26aea9569305e3b09e45a21f38f2e79e829d2e8f950e5882c7189fb5aa93e81d`](https://arbiscan.io/tx/0x26aea9569305e3b09e45a21f38f2e79e829d2e8f950e5882c7189fb5aa93e81d)
+  returned 18.194064 USDC. The receipt has status 1 on the official Arbitrum RPC, the router is Velora Augustus v6.2
+  `0x6a000f20005980200259b80c5102003040001068`, and the fee was 0.0000039 ETH. The route came from the Velora SDK; the
+  transaction was signed and sent by the WDK account.
+- **Send.** [`0x39157cb69f15adbec03f09dcccd7ec0cd8fbcc5d1db4f8150162693c03af19a1`](https://arbiscan.io/tx/0x39157cb69f15adbec03f09dcccd7ec0cd8fbcc5d1db4f8150162693c03af19a1)
+  moved all 18.194064 USDC via WDK `transfer` to `0xAc9033262a208Cc0c9c1f3bfC75e592A6E0D990c`. Status 1, and the
+  ERC-20 `Transfer` event matches.
+- **After the send.** The recipient forwarded the same amount 23 blocks later to another address. That is outside
+  this wallet.
+- **Finding, `@tetherto/wdk-protocol-swap-velora-evm` 1.0.0-beta.9.** The module calls the Velora rate endpoint
+  without `srcDecimals`/`destDecimals`, so the API answers `Token not found` for ETH → USDC on Arbitrum. The same request
+  with the decimals succeeds (checked directly against the API). The script therefore calls the Velora SDK directly
+  and still signs through WDK.
+- **Public RPC.** `arbitrum-one-rpc.publicnode.com` intermittently rejects `eth_getTransactionReceipt` with "Archive
+  requests require a personal token". Receipts were confirmed independently on `arb1.arbitrum.io/rpc`.
+
 ## Not covered
 
 - **Identification itself (Sumsub) and the external name check.** Both are external providers. The UI flow stops at
