@@ -22,7 +22,7 @@
     "lint:fix": "standard --fix",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --testPathIgnorePatterns=tests/integration",
-    "test:integration": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/integration/module.test.js --testPathIgnorePatterns=/node_modules/ --coverage=false"
+    "test:integration": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --config tests/integration/jest.config.js --runInBand"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",

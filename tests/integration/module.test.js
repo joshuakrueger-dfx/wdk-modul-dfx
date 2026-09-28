@@ -1,106 +1,164 @@
 // Copyright 2026 DFX AG
 // SPDX-License-Identifier: Apache-2.0
 
-// Named deviation from Integration Guide §4.6: these tests use the DFX sandbox.
-// A HTTP fiat API has no blockchain state that Hardhat can fork or reset.
-// Market data and session tokens are live; assertions use the independently
-// observed provider response, with fixed expectations for deterministic fields.
-
-import { describe, expect, test } from '@jest/globals'
-import { NoSuchElementError } from '@tetherto/wdk-wallet/protocols'
+import { afterEach, describe, expect, test } from '@jest/globals'
+import { NoSuchElementError, ProviderError } from '@tetherto/wdk-wallet/protocols'
+import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxProtocol from '../../index.js'
-import { accountFixture, CONFIG, expectedQuote, observeSandbox, PAIR } from './helpers.js'
+import { accountFixture, DummyChangingSigner, EXTERNAL_TRANSACTION_ID, LOCAL_CONFIG, PAIR, UID } from './helpers.js'
 
 describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
+  const accounts = []
+
+  async function freshAccount () {
+    const account = await accountFixture()
+    accounts.push(account)
+    return account
+  }
+
+  afterEach(() => {
+    for (const account of accounts.splice(0)) account.dispose()
+  })
+
   describe('getSupportedCryptoAssets', () => {
-    test('lists the sandbox Ethereum USDT asset with its API description', async () => {
-      const observer = observeSandbox()
-      const protocol = new DfxProtocol(undefined, { ...CONFIG, fetch: observer.fetch })
+    const EXPECTED_ASSETS = [{ code: 'USDT', networkCode: 'ethereum', decimals: 6, name: 'Tether' }]
+
+    test('lists the recorded Ethereum USDT asset', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
       const result = await protocol.getSupportedCryptoAssets()
 
-      const asset = observer.responses.get('/v1/asset').find(row => row.name === 'USDT' && row.blockchain === 'Ethereum')
-      expect(result.filter(row => row.code === 'USDT' && row.networkCode === 'ethereum')).toEqual([
-        { code: 'USDT', networkCode: 'ethereum', decimals: 6, name: asset.description ?? undefined }
-      ])
-    }, 45000)
+      expect(result.filter(row => row.code === 'USDT' && row.networkCode === 'ethereum')).toEqual(EXPECTED_ASSETS)
+    })
   })
 
   describe('getSupportedFiatCurrencies', () => {
-    test('lists EUR with two decimal places', async () => {
-      const protocol = new DfxProtocol(undefined, CONFIG)
+    const EXPECTED_CURRENCIES = [{ code: 'EUR', decimals: 2 }]
+
+    test('lists the recorded EUR currency', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
       const result = await protocol.getSupportedFiatCurrencies()
 
-      expect(result.filter(row => row.code === 'EUR')).toEqual([{ code: 'EUR', decimals: 2 }])
-    }, 45000)
+      expect(result.filter(row => row.code === 'EUR')).toEqual(EXPECTED_CURRENCIES)
+    })
   })
 
   describe('getSupportedCountries', () => {
-    test('lists Switzerland with the sandbox bank availability', async () => {
-      const observer = observeSandbox()
-      const protocol = new DfxProtocol(undefined, { ...CONFIG, fetch: observer.fetch })
+    const EXPECTED_COUNTRIES = [{ code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true }]
+
+    test('lists Switzerland with recorded bank availability', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
       const result = await protocol.getSupportedCountries()
 
-      const country = observer.responses.get('/v1/country').find(row => row.symbol === 'CH')
-      expect(result.filter(row => row.code === 'CH')).toEqual([
-        { code: 'CH', name: country.name, isBuyAllowed: country.bankAllowed, isSellAllowed: country.bankAllowed }
-      ])
-    }, 45000)
+      expect(result.filter(row => row.code === 'CH')).toEqual(EXPECTED_COUNTRIES)
+    })
   })
 
-  describe.each([['quoteBuy', 'buy'], ['quoteSell', 'sell']])('%s', (METHOD, DIRECTION) => {
-    test.each([['fiatAmount', 10000n], ['cryptoAmount', 100000000n]])('quotes the sandbox pair for %s', async (FIELD, AMOUNT) => {
-      const observer = observeSandbox()
-      const protocol = new DfxProtocol(undefined, { ...CONFIG, fetch: observer.fetch })
+  describe('quoteBuy', () => {
+    const EXPECTED_FIAT_QUOTE = { cryptoAmount: 118700000n, fiatAmount: 10000n, fee: 149n, rate: '0.842459983150800337' }
+    const EXPECTED_CRYPTO_QUOTE = { cryptoAmount: 100000000n, fiatAmount: 8424n, fee: 126n, rate: '0.8424' }
 
-      const result = await protocol[METHOD]({ ...PAIR, [FIELD]: AMOUNT })
+    test('quotes a buy for 100 CHF', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
-      expect(result).toEqual(expectedQuote(DIRECTION, observer.responses.get(`/v1/${DIRECTION}/quote`)))
-      expect(result[FIELD]).toBe(AMOUNT)
-    }, 45000)
+      const result = await protocol.quoteBuy({ ...PAIR, fiatAmount: 10000n })
+
+      expect(result).toEqual(EXPECTED_FIAT_QUOTE)
+    })
+
+    test('quotes a buy for 100 USDT', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
+
+      const result = await protocol.quoteBuy({ ...PAIR, cryptoAmount: 100000000n })
+
+      expect(result).toEqual(EXPECTED_CRYPTO_QUOTE)
+    })
   })
 
-  describe.each(['buy', 'sell'])('%s', METHOD => {
-    test('returns the complete sandbox widget URL with the issued session', async () => {
-      const account = await accountFixture()
-      const observer = observeSandbox()
-      const protocol = new DfxProtocol(account, { ...CONFIG, fetch: observer.fetch })
-      const ASSETS = METHOD === 'buy' ? 'asset-in=CHF&asset-out=USDT' : 'asset-in=USDT&asset-out=CHF'
-      const AMOUNT_FIELD = METHOD === 'buy' ? 'amount-in' : 'amount-out'
+  describe('quoteSell', () => {
+    const EXPECTED_FIAT_QUOTE = { cryptoAmount: 122940000n, fiatAmount: 10000n, fee: 204n, rate: '0.813404912965674313' }
+    const EXPECTED_CRYPTO_QUOTE = { cryptoAmount: 100000000n, fiatAmount: 8134n, fee: 166n, rate: '0.8134' }
 
-      const result = await protocol[METHOD]({ ...PAIR, fiatAmount: 10000n })
+    test('quotes a sale for 100 CHF', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
-      const token = observer.responses.get('/v1/auth').accessToken
-      expect(result).toEqual({
-        [`${METHOD}Url`]: `https://dev.app.dfx.swiss/${METHOD}?session=${encodeURIComponent(token)}&lang=en&${ASSETS}&blockchain=Ethereum&${AMOUNT_FIELD}=100`
-      })
-    }, 90000)
+      const result = await protocol.quoteSell({ ...PAIR, fiatAmount: 10000n })
+
+      expect(result).toEqual(EXPECTED_FIAT_QUOTE)
+    })
+
+    test('quotes a sale for 100 USDT', async () => {
+      const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
+
+      const result = await protocol.quoteSell({ ...PAIR, cryptoAmount: 100000000n })
+
+      expect(result).toEqual(EXPECTED_CRYPTO_QUOTE)
+    })
+  })
+
+  describe('buy', () => {
+    const EXPECTED_URL = 'https://dev.app.dfx.swiss/buy?session=eyJhbGciOiJub25lIn0.eyJzdWIiOiJkdW1teS1sb2NhbC11c2VyIn0.ZHVtbXktc2lnbmF0dXJl&lang=en&asset-in=CHF&asset-out=USDT&blockchain=Ethereum&amount-in=100'
+
+    test('returns the complete widget URL after authenticating a fresh account', async () => {
+      const account = await freshAccount()
+      const protocol = new DfxProtocol(account, LOCAL_CONFIG)
+
+      const result = await protocol.buy({ ...PAIR, fiatAmount: 10000n })
+
+      expect(result).toEqual({ buyUrl: EXPECTED_URL })
+    })
+
+    test('rejects a signature from a different key than the challenged owner', async () => {
+      const account = await freshAccount()
+      const otherAccount = await freshAccount()
+      const protocol = new DfxProtocol(new DummyChangingSigner(account, otherAccount), LOCAL_CONFIG)
+
+      const error = await protocol.buy({ ...PAIR, fiatAmount: 10000n }).then(() => undefined, error => error)
+
+      expect(error?.constructor).toBe(ProviderError)
+      expect(error?.message).toBe('Invalid signature')
+      expect(error?.reason).toBe(ProviderErrorReason.UNAUTHORIZED)
+    })
+  })
+
+  describe('sell', () => {
+    const EXPECTED_URL = 'https://dev.app.dfx.swiss/sell?session=eyJhbGciOiJub25lIn0.eyJzdWIiOiJkdW1teS1sb2NhbC11c2VyIn0.ZHVtbXktc2lnbmF0dXJl&lang=en&asset-in=USDT&asset-out=CHF&blockchain=Ethereum&amount-out=100'
+
+    test('returns the complete widget URL after authenticating a fresh account', async () => {
+      const account = await freshAccount()
+      const protocol = new DfxProtocol(account, LOCAL_CONFIG)
+
+      const result = await protocol.sell({ ...PAIR, fiatAmount: 10000n })
+
+      expect(result).toEqual({ sellUrl: EXPECTED_URL })
+    })
   })
 
   describe('getTransactionDetail', () => {
-    test('rejects an unregistered UID with NoSuchElementError', async () => {
-      const UID = '00000000-0000-4000-8000-000000000000'
-      const account = await accountFixture()
-      const protocol = new DfxProtocol(account, CONFIG)
+    const EXPECTED_UID_MESSAGE = 'Transaction not found'
+    const EXPECTED_EXTERNAL_MESSAGE = 'Transaction not found'
+
+    test('rejects an unregistered UID with the recorded NoSuchElementError', async () => {
+      const account = await freshAccount()
+      const protocol = new DfxProtocol(account, LOCAL_CONFIG)
 
       const error = await protocol.getTransactionDetail(UID).then(() => undefined, error => error)
 
       expect(error?.constructor).toBe(NoSuchElementError)
-      expect(error?.message).toBe('Transaction not found')
-    }, 90000)
+      expect(error?.message).toBe(EXPECTED_UID_MESSAGE)
+    })
 
-    test('rejects an unregistered external transaction ID with NoSuchElementError', async () => {
-      const EXTERNAL_TRANSACTION_ID = 'wdk-integration-unregistered-00000000-0000-4000-8000-000000000000'
-      const account = await accountFixture()
-      const protocol = new DfxProtocol(account, CONFIG)
+    test('rejects an unregistered external ID with the recorded NoSuchElementError', async () => {
+      const account = await freshAccount()
+      const protocol = new DfxProtocol(account, LOCAL_CONFIG)
 
       const error = await protocol.getTransactionDetail(EXTERNAL_TRANSACTION_ID, { idType: 'externalTransactionId' })
         .then(() => undefined, error => error)
 
       expect(error?.constructor).toBe(NoSuchElementError)
-      expect(error?.message).toBe('Transaction not found')
-    }, 90000)
+      expect(error?.message).toBe(EXPECTED_EXTERNAL_MESSAGE)
+    })
   })
 })

@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, jest, test } from '@jest/globals'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
-import { keccak_256 } from '@noble/hashes/sha3.js'
+import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js'
 import DfxProtocol, { ProviderError, ProviderErrorReason } from '../index.js'
 import { expectRequests, failure, httpRequest } from './helpers.js'
 
@@ -116,7 +116,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const OWNER_ADDRESS = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
       const KEY = Uint8Array.from([...new Array(31).fill(0), 1])
       const PAYLOAD = Buffer.from(DUMMY_MESSAGE, 'utf8')
-      const DIGEST = keccak_256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${PAYLOAD.length}`), PAYLOAD]))
+      const DIGEST = keccak256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${PAYLOAD.length}`), PAYLOAD]))
       let signature = secp256k1.Signature.fromBytes(secp256k1.sign(DIGEST, KEY, { prehash: false, format: 'recovered' }), 'recovered')
       if (HIGH_S) {
         const ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n

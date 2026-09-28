@@ -398,36 +398,46 @@ Tests route injected fetch calls by HTTP method and URL. Coverage thresholds are
 CI gate. Type declarations are maintained manually;
 do not regenerate them with `build:types`.
 
-Sandbox integration tests in `tests/integration/module.test.js` are excluded from
-the default unit-test run. They use real fetch and always target the sandbox. Public tests
-cover all three catalogs and both amount modes for both quote directions:
-
-```sh
-npm run test:integration -- --testNamePattern='getSupported|quote'
-```
-
-`tests/integration/helpers.js` fixes the pair to USDT on Ethereum and CHF, with
-`10000` fiat minor units and `100000000` crypto minor units (100 CHF and 100 USDT).
-No environment variables are needed. Authenticated tests generate a fresh random
-seed in memory and derive account 0 using `@tetherto/wdk-wallet-evm`.
-The required provider is a public Sepolia RPC URL; these tests only sign messages
-locally and send no blockchain transactions. No seed is stored in the repository.
-The transaction-detail tests use fixed, unregistered UID and external transaction
-ID values and expect `NoSuchElementError` with the exact message
-`Transaction not found`. A fresh sandbox account needs no existing transaction
-or payment for these scenarios.
+Local integration tests in `tests/integration/module.test.js` are excluded from
+the default unit-test and coverage runs. Jest starts a local HTTP server on a free
+loopback port and stops it in global teardown. Injected fetch redirects sandbox
+API URLs to that server; no external network or user environment variables are
+needed. Tests cover three catalogs, four quotes, authenticated widget URLs,
+unknown transaction IDs and rejection of an invalid signature.
 
 ```sh
 npm run test:integration
 ```
 
-Authenticated tests call `POST /v1/auth`, which permanently creates a DFX sandbox
-user on the first call for an unknown address, recording the address and IP.
-Public catalog and quote tests do not write data.
-Authenticated tests generate buy/sell URLs and look up unregistered transaction IDs;
-they do not complete bank payment or KYC in the widget.
-`test:coverage` explicitly excludes the integration file; the 100% gate is
-measured from unit tests only.
+The server replays raw sandbox responses from
+`tests/integration/fixtures/sandbox.json`; its `recordedAt` field is the UTC
+recording date. **Recorded on 2026-09-28.** The fixture preserves decimal JSON tokens
+without parsing and reserializing response numbers. USDT on Ethereum and CHF are
+tested with `10000n` fiat minor units or `100000000n` crypto minor units.
+Authenticated tests derive a fresh WDK EVM account from a random in-memory seed
+per scenario and sign locally. The server verifies EIP-191 signatures against the
+last issued challenge and returns a fixed local session token. No seed or test
+account address is stored in the repository.
+
+To refresh the recording, explicitly run the following network-enabled command
+outside Jest:
+
+```sh
+node tests/integration/record.js
+```
+
+Only the recording script contacts the live sandbox and creates a fresh sandbox
+user through `POST /v1/auth`, recording its address and IP at DFX. It stores no
+authentication token and replaces the challenge address with a placeholder.
+After recording, fill the `FILL_AFTER_RECORDING` constants in `module.test.js`
+with independently calculated literal expectations, update this paragraph with
+the actual recording date, and include the fixture with the tests. Missing
+fixtures fail setup; unfilled expectations fail assertions. Expectations must
+never be derived from fixture responses during a test run.
+
+Live sandbox and production coverage remains in `e2e/live-matrix.mjs` (catalogs,
+quotes, authentication, widget and details). The 100% coverage gate is measured
+from unit tests only.
 
 The release workflow uses `holepunchto/actions/publish` after lint and coverage
 checks.

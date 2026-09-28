@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
-import { keccak_256 } from '@noble/hashes/sha3.js'
+import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js'
 import {
   AccountRequiredError, BuyError, SellError, MaximumFeeExceededError, NoSuchElementError, IFiatProtocol as WalletFiatProtocol,
   ProviderError, ProviderRequiredError, ValueError, NotImplementedError, ReadOnlyAccountRequiredError
@@ -138,7 +138,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     // Public test key 1. The expected EOA is fixed independently of recovery.
     const OWNER_KEY = Uint8Array.from([...new Array(31).fill(0), 1])
     const payload = Buffer.from(message, 'utf8')
-    const digest = keccak_256(Buffer.concat([
+    const digest = keccak256(Buffer.concat([
       Buffer.from(`\x19Ethereum Signed Message:\n${payload.length}`, 'utf8'), payload
     ]))
     const signature = secp256k1.sign(digest, OWNER_KEY, { prehash: false, format: 'recovered' })
@@ -731,7 +731,8 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
         getSupportedCryptoAssets: [httpRequest('/v1/asset')],
         getSupportedFiatCurrencies: [httpRequest('/v1/fiat')],
         getTransactionDetail: ROUTE === 'GET /v1/transaction/detail/single?uid=123'
-          ? [CHALLENGE_REQUEST, ETH_AUTH_REQUEST, DETAIL_REQUEST] : [CHALLENGE_REQUEST]
+          ? [CHALLENGE_REQUEST, ETH_AUTH_REQUEST, DETAIL_REQUEST]
+          : [CHALLENGE_REQUEST]
       }
       expectInteractions(EXPECTED_REQUESTS[CASE_METHOD],
         CASE_METHOD === 'buy' || ROUTE === 'GET /v1/transaction/detail/single?uid=123' ? [['[dev]_Sign this exact message']] : [],
@@ -834,7 +835,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       // therefore yields key 1, although the signature was made for another
       // digest with key 2. Both keys are public test scalars.
       const PAYLOAD = Buffer.from(DUMMY_ACCOUNT_MESSAGE, 'utf8')
-      const DIGEST = keccak_256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${PAYLOAD.length}`), PAYLOAD]))
+      const DIGEST = keccak256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${PAYLOAD.length}`), PAYLOAD]))
       const ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
       const R = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n
       const FOREIGN_DIGEST = (BigInt('0x' + Buffer.from(DIGEST).toString('hex')) - R + ORDER) % ORDER
@@ -1224,9 +1225,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
 
     test('excludes null decimals but keeps zero decimals and optional asset names', async () => {
-      const { protocol } = setup({}, { 'GET /v1/asset': response([
-        { ...DUMMY_ASSETS[0], decimals: null }, { ...DUMMY_ASSETS[4], decimals: 0, description: undefined }
-      ]) })
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([
+          { ...DUMMY_ASSETS[0], decimals: null }, { ...DUMMY_ASSETS[4], decimals: 0, description: undefined }
+        ])
+      })
       const result = await protocol.getSupportedCryptoAssets()
 
       expect(result).toEqual([{ code: 'BUY', networkCode: 'ethereum', decimals: 0, name: undefined }])
@@ -1637,7 +1640,8 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ])('rejects malformed authenticated responses', async (ROUTE, DUMMY_BODY) => {
       const { protocol } = setup({}, { [ROUTE]: response(DUMMY_BODY) })
       await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-      expectInteractions(ROUTE === 'POST /v1/auth' ? [CHALLENGE_REQUEST, AUTH_REQUEST]
+      expectInteractions(ROUTE === 'POST /v1/auth'
+        ? [CHALLENGE_REQUEST, AUTH_REQUEST]
         : ROUTE === 'GET /v1/transaction/detail/single?uid=123' ? [CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST] : [CHALLENGE_REQUEST],
       ROUTE.startsWith('GET /v1/auth/') ? [] : [['[dev]_Sign this exact message']], [[]])
     })

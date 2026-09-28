@@ -20,7 +20,7 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, sandbox | `npm run test:integration` | 11/11 tests, fresh WDK EVM account per run |
+| Integration, local | `npm run test:integration` | 12/12 tests against a local DFX server replaying recorded sandbox responses; no network |
 | Unit tests + coverage | `npm run lint && npm run test:coverage` | lint output empty; 707/707 tests; 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 41/41 mutations detected, each by 1–207 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
@@ -295,10 +295,19 @@ request two signatures each.
   body), dummy account classes, every request and signing call asserted as fixed values inside each test, complete
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
-  assertions (T001), naming and the integration environment. All fixed except the environment (see below).
-- Integration tests (`npm run test:integration`, `tests/integration/module.test.js`): 11/11 against the DFX sandbox,
-  with a fresh WDK EVM account generated per run and no environment variable. Before this change the three
-  authenticated tests were skipped unless an account module was supplied, so they never ran in the gate.
+  assertions (T001), naming and the integration environment. All fixed.
+- Integration tests (`npm run test:integration`, `tests/integration/`): 12/12 against a local DFX server started
+  from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
+  fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.
+  Expected values are fixed literals computed independently from the recorded responses. Checks: 12/12 with all
+  outbound network access denied by a macOS sandbox profile (a control fetch in the same profile is blocked);
+  turning off the fake's signature check makes the wrong-key test fail; module mutations M02 and M12 fail 2 and 5 of
+  the 12. No environment variable is needed; a fresh WDK EVM account is generated per test. Before this change the
+  three authenticated tests were skipped unless an account module was supplied, so they never ran in the gate.
+- Live coverage moved entirely to `e2e/live-matrix.mjs`; rerun on 2026-09-28 with the current module against the
+  sandbox: 172/178, the same six expected failures as in section 2.
+- Test files are excluded from `npm run lint` by the Tether scaffold (`standard.ignore`). They were linted
+  separately with the `standard` rules and ignore disabled; output empty.
 
 ## Not covered
 
@@ -309,7 +318,6 @@ request two signatures each.
 - **USDC with real money.** The real purchase was ETH. USDC is covered by quotes and widget tests only.
 - **Deposit detection on a real chain.** The sale in the local tests starts from a deposit row as the blockchain scan
   would write it; the scan itself is not exercised.
-- **Integration environment per `wdk-review-tests`.** The skill asks for a local, forked environment and never a live
-  testnet. The integration tests run against the DFX sandbox instead, following Tether's integration guide §4.6
-  ("integration tests against testnets where applicable"); an HTTP fiat API has no chain state to fork. This
-  deviation is not yet confirmed by Tether.
+- **Drift between the recorded sandbox and the live API.** The integration fixtures are a snapshot of
+  2026-09-28. Changes in DFX responses after that date show up in `e2e/live-matrix.mjs`, not in `npm run
+  test:integration`; re-record with `node tests/integration/record.js`.
