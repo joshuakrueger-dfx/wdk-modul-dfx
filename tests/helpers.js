@@ -3,6 +3,10 @@
 
 import { expect } from '@jest/globals'
 
+export function response (data, status = 200) {
+  return { ok: status >= 200 && status < 300, status, async text () { return typeof data === 'string' ? data : JSON.stringify(data) } }
+}
+
 // AbortSignal identity is allocated by the runtime, not a deterministic fixture.
 // All HTTP data is compared verbatim; the signal is checked separately.
 export function expectRequests (calls, expected, aborted = false) {

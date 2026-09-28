@@ -19,14 +19,14 @@ function attributableInput (data, detail) {
 }
 
 export default class DfxClient {
-  /** @private */
+  /** @internal */
   constructor (config) {
     this._fetch = config.fetch ?? globalThis.fetch
     this._timeout = config.timeout ?? 30000
     this._base = config.environment === 'sandbox' ? 'https://dev.api.dfx.swiss' : 'https://api.dfx.swiss'
   }
 
-  /** @private */
+  /** @internal */
   async _request (path, { method = 'GET', body, token, input = false, detail = false } = {}) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this._timeout)

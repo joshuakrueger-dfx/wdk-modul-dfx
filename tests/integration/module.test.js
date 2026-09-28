@@ -1,17 +1,25 @@
 // Copyright 2026 DFX AG
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, test } from '@jest/globals'
+import { readFile } from 'node:fs/promises'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/globals'
 import { NoSuchElementError, ProviderError } from '@tetherto/wdk-wallet/protocols'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxProtocol from '../../index.js'
-import { accountFixture, DummyChangingSigner, EXTERNAL_TRANSACTION_ID, LOCAL_CONFIG, PAIR, UID } from './helpers.js'
+import { accountFixture, DummyChangingSigner, EXTERNAL_TRANSACTION_ID, LOCAL_CONFIG, PAIR, resetServer, UID } from './helpers.js'
 
 describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   const accounts = []
+  let expectedCatalog
 
-  async function freshAccount () {
-    const account = await accountFixture()
+  beforeAll(async () => {
+    expectedCatalog = JSON.parse(await readFile(new URL('./fixtures/expected-catalog.json', import.meta.url), 'utf8'))
+  })
+
+  beforeEach(async () => { await resetServer() })
+
+  async function freshAccount (index = 0) {
+    const account = await accountFixture(index)
     accounts.push(account)
     return account
   }
@@ -21,38 +29,32 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   describe('getSupportedCryptoAssets', () => {
-    const EXPECTED_ASSETS = [{ code: 'USDT', networkCode: 'ethereum', decimals: 6, name: 'Tether' }]
-
-    test('lists the recorded Ethereum USDT asset', async () => {
+    test('lists the complete recorded crypto catalog in API order', async () => {
       const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
       const result = await protocol.getSupportedCryptoAssets()
 
-      expect(result.filter(row => row.code === 'USDT' && row.networkCode === 'ethereum')).toEqual(EXPECTED_ASSETS)
+      expect(result).toEqual(expectedCatalog.assets)
     })
   })
 
   describe('getSupportedFiatCurrencies', () => {
-    const EXPECTED_CURRENCIES = [{ code: 'EUR', decimals: 2 }]
-
-    test('lists the recorded EUR currency', async () => {
+    test('lists the complete recorded fiat catalog in API order', async () => {
       const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
       const result = await protocol.getSupportedFiatCurrencies()
 
-      expect(result.filter(row => row.code === 'EUR')).toEqual(EXPECTED_CURRENCIES)
+      expect(result).toEqual(expectedCatalog.currencies)
     })
   })
 
   describe('getSupportedCountries', () => {
-    const EXPECTED_COUNTRIES = [{ code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true }]
-
-    test('lists Switzerland with recorded bank availability', async () => {
+    test('lists the complete recorded country catalog in API order', async () => {
       const protocol = new DfxProtocol(undefined, LOCAL_CONFIG)
 
       const result = await protocol.getSupportedCountries()
 
-      expect(result.filter(row => row.code === 'CH')).toEqual(EXPECTED_COUNTRIES)
+      expect(result).toEqual(expectedCatalog.countries)
     })
   })
 
@@ -112,7 +114,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test('rejects a signature from a different key than the challenged owner', async () => {
       const account = await freshAccount()
-      const otherAccount = await freshAccount()
+      const otherAccount = await freshAccount(1)
       const protocol = new DfxProtocol(new DummyChangingSigner(account, otherAccount), LOCAL_CONFIG)
 
       const error = await protocol.buy({ ...PAIR, fiatAmount: 10000n }).then(() => undefined, error => error)

@@ -3,6 +3,13 @@
     "index.js",
     "src/**/*.js",
   ],
+  "exclude": [
+    "src/amounts.js",
+    "src/constants.js",
+    "src/dfx-client.js",
+    "src/json.js",
+    "src/signature.js"
+  ],
   "compilerOptions": {
     "target": "ES2015",
     "module": "NodeNext",

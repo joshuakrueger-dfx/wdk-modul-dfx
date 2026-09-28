@@ -29,7 +29,7 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * @typedef {Object} DfxProtocolConfig
  * @property {'production' | 'sandbox'} [environment] - API and app environment. Only sandbox selects sandbox; otherwise production is used.
  * @property {string} [wallet] - Partner identifier supplied by the integrating wallet developer. No default.
- * @property {string} [network] - Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default. Required for buy and sell.
+ * @property {string} [network] - Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default.
  * @property {string} [publicKey] - Public key sent as key during authentication. No default.
  * @property {string} [language] - Widget language code. Defaults to en.
  * @property {typeof fetch} [fetch] - HTTP implementation called with globalThis as receiver. Defaults to globalThis.fetch.
@@ -40,7 +40,7 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * Per-operation network selection and wallet transaction identifier.
  *
  * @typedef {Object} DfxTradeConfig
- * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. Selectable for quotes; must match the constructor network for buy and sell.
+ * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to and must match the constructor network.
  * @property {string} [externalTransactionId] - Wallet-assigned ID, unique per widget opening; 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
  */
 
@@ -48,7 +48,7 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * Per-operation trade configuration.
  *
  * @typedef {Object} DfxTradeOptions
- * @property {DfxTradeConfig} [config] - Trade configuration.
+ * @property {DfxTradeConfig} [config] - Account network and wallet-assigned transaction ID for this widget opening.
  */
 
 /**
@@ -62,13 +62,29 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * Per-operation quote configuration.
  *
  * @typedef {Object} DfxQuoteOptions
- * @property {DfxQuoteConfig} [config] - Quote configuration.
+ * @property {DfxQuoteConfig} [config] - Network selection for this quote, independent of the account network.
  */
 
-/** @typedef {BuyOptions & DfxTradeOptions} DfxBuyOptions */
-/** @typedef {SellOptions & DfxTradeOptions} DfxSellOptions */
-/** @typedef {Omit<BuyOptions, 'recipient'> & DfxQuoteOptions} DfxBuyQuoteOptions */
-/** @typedef {Omit<SellOptions, 'refundAddress'> & DfxQuoteOptions} DfxSellQuoteOptions */
+/**
+ * Purchase amounts and delivery address with DFX widget configuration.
+ *
+ * @typedef {BuyOptions & DfxTradeOptions} DfxBuyOptions
+ */
+/**
+ * Sale amounts and refund address with DFX widget configuration.
+ *
+ * @typedef {SellOptions & DfxTradeOptions} DfxSellOptions
+ */
+/**
+ * Indicative purchase amounts and network selection without a delivery address.
+ *
+ * @typedef {Omit<BuyOptions, 'recipient'> & DfxQuoteOptions} DfxBuyQuoteOptions
+ */
+/**
+ * Indicative sale amounts and network selection without a refund address.
+ *
+ * @typedef {Omit<SellOptions, 'refundAddress'> & DfxQuoteOptions} DfxSellQuoteOptions
+ */
 
 const ACCOUNT_ERRORS = {
   buy: [AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, BuyError, MaximumFeeExceededError],
@@ -168,10 +184,9 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Creates a new interface to the protocol without binding it to a wallet account.
-   * Creates an account-free DFX interface for quotes and supported lists.
    *
    * @overload
-   * @param {undefined} [account] - Omit for public API access. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+   * @param {undefined} [account] - Omit to access only quotes and supported lists.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
    * @throws {ValueError} If timeout is non-finite or non-positive.
    * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
@@ -182,10 +197,9 @@ export default class DfxProtocol extends FiatProtocol {
    */
   /**
    * Creates a new read-only interface to the protocol.
-   * Creates a DFX interface with a read-only wallet account.
    *
    * @overload
-   * @param {IWalletAccountReadOnly} account - Account available to the protocol. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+   * @param {IWalletAccountReadOnly} account - Read-only account; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
    * @throws {ValueError} If timeout is non-finite or non-positive.
    * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
@@ -196,10 +210,9 @@ export default class DfxProtocol extends FiatProtocol {
    */
   /**
    * Creates a new interface to the protocol.
-   * Creates a DFX interface with a signing wallet account.
    *
    * @overload
-   * @param {IWalletAccount} account - Account used to sign DFX authentication messages. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+   * @param {IWalletAccount} account - Account used to sign DFX authentication messages.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
    * @throws {ValueError} If timeout is non-finite or non-positive.
    * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
@@ -226,16 +239,17 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Generates a URL for a user to purchase a crypto asset with fiat currency.
-   * Generates a fresh authenticated purchase widget URL.
+   * Each opening uses a fresh authenticated session.
    * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
    * ERC-4337 purchases go to the signing owner EOA outside the smart account.
-   * Known authentication addresses are checked before login; uncached EVM addresses after login.
    * Account errors pass through only for the exact constructors listed below;
    * subclasses and other account failures become ProviderError with the original cause.
    *
    * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
    * @returns {Promise<BuyResult>} The purchase widget URL.
    * @throws {AccountRequiredError} If a signing account is unavailable.
+   * @throws {AccountRequiredError} If an account call reports a missing account.
+   * @throws {ValueError} If an account call rejects a value.
    * @throws {ValueError} If the asset or network is unsupported for buying.
    * @throws {ValueError} If the asset spelling is ambiguous on a network.
    * @throws {ValueError} If the asset is ambiguous across networks.
@@ -263,7 +277,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Gets a quote for a crypto asset purchase.
-   * Quotes an indicative purchase without a signature or reservation.
+   * Indicative, without a signature or reservation.
    *
    * @param {DfxBuyQuoteOptions} options - Purchase asset, currency and one amount in smallest units; optional config.network selects the network.
    * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
@@ -287,15 +301,16 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Generates a URL for a user to sell a crypto asset for fiat currency.
-   * Generates a fresh authenticated sale widget URL.
+   * Each opening uses a fresh authenticated session.
    * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
-   * Known authentication addresses are checked before login; uncached EVM addresses after login.
    * Account errors pass through only for the exact constructors listed below;
    * subclasses and other account failures become ProviderError with the original cause.
    *
    * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
    * @returns {Promise<SellResult>} The sale widget URL.
    * @throws {AccountRequiredError} If a signing account is unavailable.
+   * @throws {AccountRequiredError} If an account call reports a missing account.
+   * @throws {ValueError} If an account call rejects a value.
    * @throws {ValueError} If the asset or network is unsupported for selling.
    * @throws {ValueError} If the asset spelling is ambiguous on a network.
    * @throws {ValueError} If the asset is ambiguous across networks.
@@ -323,7 +338,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Gets a quote for a crypto asset sale.
-   * Quotes an indicative sale without a signature or reservation.
+   * Indicative, without a signature or reservation.
    *
    * @param {DfxSellQuoteOptions} options - Sale asset, currency and one amount in smallest units; optional config.network selects the network.
    * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
@@ -347,8 +362,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Retrieves the details of a specific transaction from the provider.
-   * Retrieves a fiat transaction by UID or external ID, renewing an expired session once.
-   * Resolves inactive catalog rows too, validating only the matched rows.
+   * Accepts a UID or external ID and renews an expired session once.
    * Only exact ProviderRequiredError and ProviderError account errors pass through;
    * all other account failures become ProviderError with the original cause.
    *
@@ -359,7 +373,7 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the UID is empty or whitespace-only.
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ValueError} If the identifier is rejected by DFX.
-   * @throws {NoSuchElementError} Until DFX has registered a transaction for this id.
+   * @throws {NoSuchElementError} If no transaction exists for the given id.
    * @throws {NoSuchElementError} If the transaction is a Swap.
    * @throws {NoSuchElementError} If the transaction is a Referral.
    * @throws {ProviderRequiredError} If the signing account requires a provider.
@@ -399,7 +413,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Retrieves a list of supported crypto assets from the provider.
-   * Lists assets available for buying or selling with known decimals.
+   * Includes only assets available for buying or selling with known decimals.
    * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO default to 8 when API decimals are absent or null.
    *
    * @returns {Promise<SupportedCryptoAsset[]>} Tickers, lowercase blockchain names and base-unit decimals.
@@ -418,7 +432,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Retrieves a list of supported fiat currencies from the provider.
-   * Lists fiat currencies available in either direction with known ISO minor units.
+   * Includes only currencies available in either direction with known ISO minor units.
    *
    * @returns {Promise<SupportedFiatCurrency[]>} ISO currency codes and minor-unit decimals.
    * @throws {ProviderError} If the API fails.
@@ -432,7 +446,7 @@ export default class DfxProtocol extends FiatProtocol {
 
   /**
    * Retrieves a list of supported countries or regions from the provider.
-   * Lists countries with bank-transfer availability for both trade directions.
+   * Bank-transfer availability determines both trade direction flags.
    *
    * @returns {Promise<SupportedCountry[]>} Country codes, names and bank availability flags.
    * @throws {ProviderError} If the API fails.

@@ -4,9 +4,8 @@
 export default {
   rootDir: '../..',
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/tests/integration/module.test.js'],
+  testMatch: ['<rootDir>/tests/integration/*.test.js'],
   globalSetup: '<rootDir>/tests/integration/setup.js',
   globalTeardown: '<rootDir>/tests/integration/teardown.js',
-  collectCoverage: false,
   testTimeout: 15000
 }

@@ -37,6 +37,11 @@ export async function startServer () {
     if (!responses?.[key]) throw new Error(`Missing fixture: ${key}`)
   }
   const challenges = new Map()
+  const tokens = new Set()
+  const events = []
+  let faults = {}
+  let logins = 0
+  let challengeCount = 0
   const server = createServer(async (request, response) => {
     const send = (status, raw) => {
       response.writeHead(status, { 'Content-Type': 'application/json' })
@@ -47,9 +52,28 @@ export async function startServer () {
       for await (const chunk of request) chunks.push(chunk)
       const body = Buffer.concat(chunks).toString('utf8') || null
       const url = new URL(request.url, 'http://127.0.0.1')
+      if (request.method === 'POST' && url.pathname === '/__reset') {
+        challenges.clear()
+        tokens.clear()
+        events.length = 0
+        logins = 0
+        challengeCount = 0
+        faults = JSON.parse(body || '{}')
+        send(200, '{}')
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/__events') {
+        send(200, JSON.stringify(events))
+        return
+      }
       if (request.method === 'GET' && url.pathname === '/v1/auth/signMessage' && body === null &&
           [...url.searchParams.keys()].join() === 'address' && /^0x[0-9a-f]{40}$/i.test(url.searchParams.get('address'))) {
         const address = url.searchParams.get('address')
+        events.push(`challenge:${address}`)
+        if (++challengeCount === 2 && faults.ownerChallenge) {
+          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          return
+        }
         const raw = responses.challenge.raw.replaceAll(ADDRESS_PLACEHOLDER, address)
         challenges.set(address.toLowerCase(), JSON.parse(raw).message)
         send(responses.challenge.status, raw)
@@ -61,19 +85,38 @@ export async function startServer () {
           throw new Error('Unrecorded DFX auth request: expected address, signature and blockchain Ethereum')
         }
         const address = typeof auth.address === 'string' ? auth.address.toLowerCase() : ''
+        events.push(`login:${auth.address}`)
         const message = challenges.get(address)
         if (!message || !validSignature(message, auth.signature, address)) {
           send(401, JSON.stringify({ message: 'Invalid signature' }))
           return
         }
         challenges.delete(address)
-        send(200, JSON.stringify({ accessToken: DUMMY_TOKEN }))
+        ++logins
+        if (logins === 1 && faults.auth === 'unauthorized') {
+          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          return
+        }
+        // Explicit corruption probe, not a recorded successful DFX response.
+        if (logins === 1 && faults.auth === 'missing token') {
+          send(200, '{}')
+          return
+        }
+        const token = logins === 1 ? DUMMY_TOKEN : `${DUMMY_TOKEN}.${logins}`
+        tokens.add(token)
+        send(200, JSON.stringify({ accessToken: token }))
         return
       }
-      if (request.method === 'GET' && url.pathname === '/v1/transaction/detail/single' &&
-          request.headers.authorization !== `Bearer ${DUMMY_TOKEN}`) {
-        send(401, JSON.stringify({ message: 'Unauthorized' }))
-        return
+      if (request.method === 'GET' && url.pathname === '/v1/transaction/detail/single') {
+        events.push(`detail:${request.url}:${request.headers.authorization}`)
+        if (faults.expireDetails > 0) {
+          --faults.expireDetails
+          tokens.clear()
+        }
+        if (!tokens.has(request.headers.authorization?.slice(7))) {
+          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          return
+        }
       }
       const entry = Object.values(responses).find(entry => entry.request &&
         entry.request.method === request.method && entry.request.path === request.url && entry.request.body === body)

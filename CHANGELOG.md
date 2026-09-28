@@ -8,7 +8,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
-- Re-export WDK error classes, ProviderErrorReason and wallet account types;
+- Re-export FiatProtocol, WDK error classes, ProviderErrorReason, BuyErrorReason,
+  SellErrorReason and wallet account types;
   provide dedicated network-only quote option types.
 - Optional wallet-assigned `externalTransactionId` for buy/sell widget URLs and
   transaction lookup via `getTransactionDetail(id, { idType: 'externalTransactionId' })`.
@@ -25,6 +26,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   tests using a local account module; unit coverage excludes integration execution.
 
 ### Changed
+
+- Move stateful owner-cache and session scenarios to the local replay integration
+  suite with real WDK EVM signatures, deterministic accounts and per-test resets.
+  Compare complete catalogs with an independently supplied expectation fixture.
+- Clarify DFX option and account-error documentation, mirror it in the maintained
+  declarations and use explicit unit-test expectations for decimals and encoding.
 
 - Follow C005 by trusting declared argument and account return types; retain value rules and external API response validation.
 - Cache recovered EVM signers only after successful authentication; reject

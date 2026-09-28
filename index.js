@@ -33,7 +33,7 @@
 /** @typedef {import('@tetherto/wdk-wallet/protocols').SupportedCountry} SupportedCountry */
 
 export { default, default as DfxProtocol } from './src/dfx-protocol.js'
-export { IFiatProtocol } from '@tetherto/wdk-wallet/protocols'
+export { IFiatProtocol, FiatProtocol, BuyErrorReason, SellErrorReason } from '@tetherto/wdk-wallet/protocols'
 export {
   AccountRequiredError, ValueError, ProviderError, ProviderRequiredError,
   BuyError, SellError, MaximumFeeExceededError, NoSuchElementError

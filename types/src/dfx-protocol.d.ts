@@ -1,24 +1,10 @@
-import { FiatProtocol } from '@tetherto/wdk-wallet/protocols';
-
-export type IWalletAccount = import('@tetherto/wdk-wallet').IWalletAccount;
-export type IWalletAccountReadOnly = import('@tetherto/wdk-wallet').IWalletAccountReadOnly;
-export type BuyOptions = import('@tetherto/wdk-wallet/protocols').BuyOptions;
-export type SellOptions = import('@tetherto/wdk-wallet/protocols').SellOptions;
-export type BuyResult = import('@tetherto/wdk-wallet/protocols').BuyResult;
-export type SellResult = import('@tetherto/wdk-wallet/protocols').SellResult;
-export type FiatQuote = import('@tetherto/wdk-wallet/protocols').FiatQuote;
-export type FiatTransactionDetail = import('@tetherto/wdk-wallet/protocols').FiatTransactionDetail;
-export type SupportedCryptoAsset = import('@tetherto/wdk-wallet/protocols').SupportedCryptoAsset;
-export type SupportedFiatCurrency = import('@tetherto/wdk-wallet/protocols').SupportedFiatCurrency;
-export type SupportedCountry = import('@tetherto/wdk-wallet/protocols').SupportedCountry;
-
 /** Configuration for DFX API and widget access. */
 export interface DfxProtocolConfig {
     /** API and app environment. Only sandbox selects sandbox; otherwise production is used. */
     environment?: 'production' | 'sandbox';
     /** Partner identifier supplied by the integrating wallet developer. No default. */
     wallet?: string;
-    /** Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default. Required for buy and sell. */
+    /** Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default. */
     network?: string;
     /** Public key sent as key during authentication. No default. */
     publicKey?: string;
@@ -32,7 +18,7 @@ export interface DfxProtocolConfig {
 
 /** Per-operation network selection and wallet transaction identifier. */
 export interface DfxTradeConfig {
-    /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. Selectable for quotes; must match the constructor network for buy and sell. */
+    /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to and must match the constructor network. */
     network?: string;
     /** Wallet-assigned ID, unique per widget opening; 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen. */
     externalTransactionId?: string;
@@ -40,7 +26,7 @@ export interface DfxTradeConfig {
 
 /** Per-operation trade configuration. */
 export interface DfxTradeOptions {
-    /** Trade configuration. */
+    /** Account network and wallet-assigned transaction ID for this widget opening. */
     config?: DfxTradeConfig;
 }
 
@@ -52,23 +38,26 @@ export interface DfxQuoteConfig {
 
 /** Per-operation quote configuration. */
 export interface DfxQuoteOptions {
-    /** Quote configuration. */
+    /** Network selection for this quote, independent of the account network. */
     config?: DfxQuoteConfig;
 }
 
+/** Purchase amounts and delivery address with DFX widget configuration. */
 export type DfxBuyOptions = BuyOptions & DfxTradeOptions;
+/** Sale amounts and refund address with DFX widget configuration. */
 export type DfxSellOptions = SellOptions & DfxTradeOptions;
+/** Indicative purchase amounts and network selection without a delivery address. */
 export type DfxBuyQuoteOptions = Omit<BuyOptions, 'recipient'> & DfxQuoteOptions;
+/** Indicative sale amounts and network selection without a refund address. */
 export type DfxSellQuoteOptions = Omit<SellOptions, 'refundAddress'> & DfxQuoteOptions;
 
 /** Provides DFX fiat quotes, widget URLs and transaction status. */
 export default class DfxProtocol extends FiatProtocol {
     /**
      * Creates a new interface to the protocol without binding it to a wallet account.
-     * Creates an account-free DFX interface for quotes and supported lists.
      *
      * @overload
-     * @param {undefined} [account] - Omit for public API access. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+     * @param {undefined} [account] - Omit to access only quotes and supported lists.
      * @param {DfxProtocolConfig} [config] - API and widget configuration.
      * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
@@ -80,10 +69,9 @@ export default class DfxProtocol extends FiatProtocol {
     constructor(account?: undefined, config?: DfxProtocolConfig);
     /**
      * Creates a new read-only interface to the protocol.
-     * Creates a DFX interface with a read-only wallet account.
      *
      * @overload
-     * @param {IWalletAccountReadOnly} account - Account available to the protocol. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+     * @param {IWalletAccountReadOnly} account - Read-only account; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
      * @param {DfxProtocolConfig} [config] - API and widget configuration.
      * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
@@ -95,10 +83,9 @@ export default class DfxProtocol extends FiatProtocol {
     constructor(account: IWalletAccountReadOnly, config?: DfxProtocolConfig);
     /**
      * Creates a new interface to the protocol.
-     * Creates a DFX interface with a signing wallet account.
      *
      * @overload
-     * @param {IWalletAccount} account - Account used to sign DFX authentication messages. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+     * @param {IWalletAccount} account - Account used to sign DFX authentication messages.
      * @param {DfxProtocolConfig} [config] - API and widget configuration.
      * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
@@ -110,16 +97,17 @@ export default class DfxProtocol extends FiatProtocol {
     constructor(account: IWalletAccount, config?: DfxProtocolConfig);
     /**
      * Generates a URL for a user to purchase a crypto asset with fiat currency.
-     * Generates a fresh authenticated purchase widget URL.
+     * Each opening uses a fresh authenticated session.
      * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
      * ERC-4337 purchases go to the signing owner EOA outside the smart account.
-     * Known authentication addresses are checked before login; uncached EVM addresses after login.
      * Account errors pass through only for the exact constructors listed below;
      * subclasses and other account failures become ProviderError with the original cause.
      *
      * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
      * @returns {Promise<BuyResult>} The purchase widget URL.
      * @throws {AccountRequiredError} If a signing account is unavailable.
+     * @throws {AccountRequiredError} If an account call reports a missing account.
+     * @throws {ValueError} If an account call rejects a value.
      * @throws {ValueError} If the asset or network is unsupported for buying.
      * @throws {ValueError} If the asset spelling is ambiguous on a network.
      * @throws {ValueError} If the asset is ambiguous across networks.
@@ -144,7 +132,7 @@ export default class DfxProtocol extends FiatProtocol {
     buy(options: DfxBuyOptions): Promise<BuyResult>;
     /**
      * Gets a quote for a crypto asset purchase.
-     * Quotes an indicative purchase without a signature or reservation.
+     * Indicative, without a signature or reservation.
      *
      * @param {DfxBuyQuoteOptions} options - Purchase asset, currency and one amount in smallest units; optional config.network selects the network.
      * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
@@ -165,15 +153,16 @@ export default class DfxProtocol extends FiatProtocol {
     quoteBuy(options: DfxBuyQuoteOptions): Promise<FiatQuote>;
     /**
      * Generates a URL for a user to sell a crypto asset for fiat currency.
-     * Generates a fresh authenticated sale widget URL.
+     * Each opening uses a fresh authenticated session.
      * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
-     * Known authentication addresses are checked before login; uncached EVM addresses after login.
      * Account errors pass through only for the exact constructors listed below;
      * subclasses and other account failures become ProviderError with the original cause.
      *
      * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
      * @returns {Promise<SellResult>} The sale widget URL.
      * @throws {AccountRequiredError} If a signing account is unavailable.
+     * @throws {AccountRequiredError} If an account call reports a missing account.
+     * @throws {ValueError} If an account call rejects a value.
      * @throws {ValueError} If the asset or network is unsupported for selling.
      * @throws {ValueError} If the asset spelling is ambiguous on a network.
      * @throws {ValueError} If the asset is ambiguous across networks.
@@ -198,7 +187,7 @@ export default class DfxProtocol extends FiatProtocol {
     sell(options: DfxSellOptions): Promise<SellResult>;
     /**
      * Gets a quote for a crypto asset sale.
-     * Quotes an indicative sale without a signature or reservation.
+     * Indicative, without a signature or reservation.
      *
      * @param {DfxSellQuoteOptions} options - Sale asset, currency and one amount in smallest units; optional config.network selects the network.
      * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
@@ -219,8 +208,7 @@ export default class DfxProtocol extends FiatProtocol {
     quoteSell(options: DfxSellQuoteOptions): Promise<FiatQuote>;
     /**
      * Retrieves the details of a specific transaction from the provider.
-     * Retrieves a fiat transaction by UID or external ID, renewing an expired session once.
-     * Resolves inactive catalog rows too, validating only the matched rows.
+     * Accepts a UID or external ID and renews an expired session once.
      * Only exact ProviderRequiredError and ProviderError account errors pass through;
      * all other account failures become ProviderError with the original cause.
      *
@@ -231,7 +219,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If the UID is empty or whitespace-only.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ValueError} If the identifier is rejected by DFX.
-     * @throws {NoSuchElementError} Until DFX has registered a transaction for this id.
+     * @throws {NoSuchElementError} If no transaction exists for the given id.
      * @throws {NoSuchElementError} If the transaction is a Swap.
      * @throws {NoSuchElementError} If the transaction is a Referral.
      * @throws {ProviderRequiredError} If the signing account requires a provider.
@@ -243,7 +231,7 @@ export default class DfxProtocol extends FiatProtocol {
     getTransactionDetail(txId: string, options?: { idType?: 'uid' | 'externalTransactionId' }): Promise<FiatTransactionDetail>;
     /**
      * Retrieves a list of supported crypto assets from the provider.
-     * Lists assets available for buying or selling with known decimals.
+     * Includes only assets available for buying or selling with known decimals.
      * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO default to 8 when API decimals are absent or null.
      *
      * @returns {Promise<SupportedCryptoAsset[]>} Tickers, lowercase blockchain names and base-unit decimals.
@@ -253,7 +241,7 @@ export default class DfxProtocol extends FiatProtocol {
     getSupportedCryptoAssets(): Promise<SupportedCryptoAsset[]>;
     /**
      * Retrieves a list of supported fiat currencies from the provider.
-     * Lists fiat currencies available in either direction with known ISO minor units.
+     * Includes only currencies available in either direction with known ISO minor units.
      *
      * @returns {Promise<SupportedFiatCurrency[]>} ISO currency codes and minor-unit decimals.
      * @throws {ProviderError} If the API fails.
@@ -262,7 +250,7 @@ export default class DfxProtocol extends FiatProtocol {
     getSupportedFiatCurrencies(): Promise<SupportedFiatCurrency[]>;
     /**
      * Retrieves a list of supported countries or regions from the provider.
-     * Lists countries with bank-transfer availability for both trade directions.
+     * Bank-transfer availability determines both trade direction flags.
      *
      * @returns {Promise<SupportedCountry[]>} Country codes, names and bank availability flags.
      * @throws {ProviderError} If the API fails.
@@ -270,3 +258,15 @@ export default class DfxProtocol extends FiatProtocol {
      */
     getSupportedCountries(): Promise<SupportedCountry[]>;
 }
+export type IWalletAccount = import("@tetherto/wdk-wallet").IWalletAccount;
+export type IWalletAccountReadOnly = import("@tetherto/wdk-wallet").IWalletAccountReadOnly;
+export type BuyOptions = import("@tetherto/wdk-wallet/protocols").BuyOptions;
+export type BuyResult = import("@tetherto/wdk-wallet/protocols").BuyResult;
+export type SellOptions = import("@tetherto/wdk-wallet/protocols").SellOptions;
+export type SellResult = import("@tetherto/wdk-wallet/protocols").SellResult;
+export type FiatQuote = import("@tetherto/wdk-wallet/protocols").FiatQuote;
+export type FiatTransactionDetail = import("@tetherto/wdk-wallet/protocols").FiatTransactionDetail;
+export type SupportedCryptoAsset = import("@tetherto/wdk-wallet/protocols").SupportedCryptoAsset;
+export type SupportedFiatCurrency = import("@tetherto/wdk-wallet/protocols").SupportedFiatCurrency;
+export type SupportedCountry = import("@tetherto/wdk-wallet/protocols").SupportedCountry;
+import { FiatProtocol } from "@tetherto/wdk-wallet/protocols";

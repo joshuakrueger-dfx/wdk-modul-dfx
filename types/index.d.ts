@@ -16,7 +16,7 @@ export type SupportedCryptoAsset = import("@tetherto/wdk-wallet/protocols").Supp
 export type SupportedFiatCurrency = import("@tetherto/wdk-wallet/protocols").SupportedFiatCurrency;
 export type SupportedCountry = import("@tetherto/wdk-wallet/protocols").SupportedCountry;
 
-export { IFiatProtocol } from "@tetherto/wdk-wallet/protocols";
+export { IFiatProtocol, FiatProtocol, BuyErrorReason, SellErrorReason } from "@tetherto/wdk-wallet/protocols";
 export type { DfxProtocolConfig, DfxTradeConfig, DfxTradeOptions, DfxQuoteConfig, DfxQuoteOptions, DfxBuyOptions, DfxSellOptions, DfxBuyQuoteOptions, DfxSellQuoteOptions } from "./src/dfx-protocol.js";
 export {
     AccountRequiredError, ValueError, ProviderError, ProviderRequiredError,

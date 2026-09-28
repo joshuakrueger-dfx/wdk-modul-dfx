@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, jest, test } from '@jest/globals'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js'
 import DfxProtocol, { ProviderError, ProviderErrorReason } from '../index.js'
-import { expectRequests, failure, httpRequest } from './helpers.js'
+import { expectRequests, failure, httpRequest, response } from './helpers.js'
 
 const fetchMock = jest.fn()
 const getAddressMock = jest.fn()
@@ -14,10 +14,6 @@ const signMock = jest.fn()
 class DummyAccount {
   async getAddress () { return getAddressMock() }
   async sign (message) { return signMock(message) }
-}
-
-function response (body, status = 200) {
-  return { ok: status === 200, status, async text () { return JSON.stringify(body) } }
 }
 
 describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
@@ -90,8 +86,8 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
 
     test.each([
-      '', 'invalid', '0xsig', '0x' + '11'.repeat(64), '0x' + 'gg'.repeat(65),
-      ...[2, 26, 29, 35, 255].map(v => '0x' + '11'.repeat(64) + v.toString(16).padStart(2, '0')),
+      '', 'invalid', '0x' + '11'.repeat(64), '0x' + 'gg'.repeat(65),
+      ...[26, 29, 35, 255].map(v => '0x' + '11'.repeat(64) + v.toString(16).padStart(2, '0')),
       '0x' + '00'.repeat(64) + '1b', '0x' + 'ff'.repeat(64) + '1c'
     ])('forwards malformed EVM recovery input %# for backend rejection', async DUMMY_SIGNATURE => {
       signMock.mockResolvedValue(DUMMY_SIGNATURE)

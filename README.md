@@ -261,14 +261,14 @@ do not reuse it for another opening. Receiving a widget URL does not establish a
 
 ## Errors
 
-Error classes and `ProviderErrorReason` are re-exported from this module with
+`FiatProtocol`, error classes and their reason enums are re-exported from this module with
 the same identity as the WDK classes used internally:
 
 ```js
 import {
   AccountRequiredError, ValueError, ProviderError, ProviderRequiredError,
   BuyError, SellError, MaximumFeeExceededError, NoSuchElementError,
-  ProviderErrorReason
+  ProviderErrorReason, BuyErrorReason, SellErrorReason
 } from '@dfx.swiss/wdk-protocol-fiat-dfx'
 ```
 
@@ -395,15 +395,19 @@ npm install && npm run lint && npm run test:coverage
 
 Tests route injected fetch calls by HTTP method and URL. Coverage thresholds are
 100% statements, branches, functions and lines across `src/`, enforced as a
-CI gate. Type declarations are maintained manually;
+CI gate. The coverage threshold applies to the combined unit and integration
+suites because state-dependent cases reachable only through multiple public
+calls belong in the integration suite (R3). Type declarations are maintained manually;
 do not regenerate them with `build:types`.
 
-Local integration tests in `tests/integration/module.test.js` are excluded from
-the default unit-test and coverage runs. Jest starts a local HTTP server on a free
+Local integration tests in `tests/integration/*.test.js` are excluded from
+the default unit-test run (`npm test`) and included in `npm run test:coverage`.
+For the integration project only, Jest starts a local HTTP server on a free
 loopback port and stops it in global teardown. Injected fetch redirects sandbox
 API URLs to that server; no external network or user environment variables are
 needed. Tests cover three catalogs, four quotes, authenticated widget URLs,
-unknown transaction IDs and rejection of an invalid signature.
+unknown transaction IDs, rejection of invalid signatures, owner-cache isolation,
+early delivery-address rejection and session reuse and renewal.
 
 ```sh
 npm run test:integration
@@ -414,10 +418,14 @@ The server replays raw sandbox responses from
 recording date. **Recorded on 2026-09-28.** The fixture preserves decimal JSON tokens
 without parsing and reserializing response numbers. USDT on Ethereum and CHF are
 tested with `10000n` fiat minor units or `100000000n` crypto minor units.
-Authenticated tests derive a fresh WDK EVM account from a random in-memory seed
-per scenario and sign locally. The server verifies EIP-191 signatures against the
-last issued challenge and returns a fixed local session token. No seed or test
-account address is stored in the repository.
+Authenticated tests derive accounts at indexes 0 and 1 from the public BIP-39 test
+phrase in Tether's testing conventions and sign locally. The server verifies
+EIP-191 signatures against the last issued challenge. Challenges, local session
+tokens and request history reset before every test; successive logins produce
+distinct local tokens. Explicit fault probes reject authentication, omit an access
+token or expire a session. These probes are not recorded successful API responses.
+Complete catalog results are compared with the independently supplied
+`tests/integration/fixtures/expected-catalog.json`, including API order.
 
 To refresh the recording, explicitly run the following network-enabled command
 outside Jest:
@@ -437,7 +445,7 @@ never be derived from fixture responses during a test run.
 
 Live sandbox and production coverage remains in `e2e/live-matrix.mjs` (catalogs,
 quotes, authentication, widget and details). The 100% coverage gate is measured
-from unit tests only.
+from the combined unit and local integration suites.
 
 The release workflow uses `holepunchto/actions/publish` after lint and coverage
 checks.
