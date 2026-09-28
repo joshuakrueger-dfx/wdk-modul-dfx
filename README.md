@@ -80,7 +80,7 @@ application and opt-in integration tests.
 | `network` | unset | Account's DFX blockchain name, compared case-insensitively; required for `buy` and `sell` |
 | `publicKey` | unset | Public key sent as `key` during authentication (e.g. Arweave, Cardano, Internet Computer) |
 | `language` | `'en'` | Widget `lang` value |
-| `fetch` | `globalThis.fetch` | Injectable HTTP implementation called with `globalThis` as receiver; absence fails on the first request, not construction |
+| `fetch` | `globalThis.fetch` | Injectable HTTP implementation called with `globalThis` as receiver; defaults to the runtime's global implementation |
 | `timeout` | `30000` | Finite number greater than zero and at most `2147483647`; request deadline in milliseconds, implemented with `AbortController` |
 
 Argument types follow the declarations and are assumed correct at runtime.
@@ -398,49 +398,36 @@ Tests route injected fetch calls by HTTP method and URL. Coverage thresholds are
 CI gate. Type declarations are maintained manually;
 do not regenerate them with `build:types`.
 
-Sandbox integration tests are skipped unless `DFX_INTEGRATION=1`. They use real
-fetch and always target the sandbox, regardless of `DFX_ENVIRONMENT`. Public tests
+Sandbox integration tests in `tests/integration/module.test.js` are excluded from
+the default unit-test run. They use real fetch and always target the sandbox. Public tests
 cover all three catalogs and both amount modes for both quote directions:
 
 ```sh
-DFX_INTEGRATION=1 npm run test:integration
+npm run test:integration -- --testNamePattern='getSupported|quote'
 ```
 
-Defaults are USDT on Ethereum and CHF, with `10000` fiat minor units and
-`100000000` crypto minor units (100 CHF and 100 USDT). Override `DFX_NETWORK`,
-`DFX_TEST_CRYPTO_ASSET`, `DFX_TEST_FIAT_CURRENCY`, `DFX_TEST_FIAT_AMOUNT` and
-`DFX_TEST_CRYPTO_AMOUNT` together as needed for a live sandbox pair and its limits.
-An optional `DFX_WALLET` is forwarded. Export these variables in the shell;
-the test runner does not automatically load `.env.example`.
-
-Authenticated tests additionally require `DFX_TEST_ACCOUNT_MODULE`, an absolute
-path (or path relative to the checkout) to a local JS module with a **default
-export** implementing this small interface:
-
-```ts
-interface TestAccount {
-  getAddress(): Promise<string>;
-  sign(message: string): Promise<string>;
-}
-```
-
-Use a sandbox signing account bound to `DFX_NETWORK`; no chain wallet dependency
-is required by the test suite. The local module manages its own account access.
-Supply `DFX_TEST_TRANSACTION_UID` for an existing sandbox fiat transaction owned
-by that account. Missing UID fails the detail test rather than silently skipping it.
+`tests/integration/helpers.js` fixes the pair to USDT on Ethereum and CHF, with
+`10000` fiat minor units and `100000000` crypto minor units (100 CHF and 100 USDT).
+No environment variables are needed. Authenticated tests generate a fresh random
+seed in memory and derive account 0 using `@tetherto/wdk-wallet-evm`.
+The required provider is a public Sepolia RPC URL; these tests only sign messages
+locally and send no blockchain transactions. No seed is stored in the repository.
+The transaction-detail tests use fixed, unregistered UID and external transaction
+ID values and expect `NoSuchElementError` with the exact message
+`Transaction not found`. A fresh sandbox account needs no existing transaction
+or payment for these scenarios.
 
 ```sh
-DFX_INTEGRATION=1 DFX_TEST_ACCOUNT_MODULE=/absolute/path/test-account.js \
-  DFX_TEST_TRANSACTION_UID=your-sandbox-uid npm run test:integration
+npm run test:integration
 ```
 
 Authenticated tests call `POST /v1/auth`, which permanently creates a DFX sandbox
-user on the first call for an unknown address, recording the address, IP and,
-if supplied, `DFX_WALLET`. Public catalog and quote tests do not write data.
-Authenticated tests generate buy/sell URLs and retrieve the existing transaction;
+user on the first call for an unknown address, recording the address and IP.
+Public catalog and quote tests do not write data.
+Authenticated tests generate buy/sell URLs and look up unregistered transaction IDs;
 they do not complete bank payment or KYC in the widget.
-`test:coverage` explicitly excludes the integration file, even when integration
-environment variables are set; the 100% gate is measured from unit tests only.
+`test:coverage` explicitly excludes the integration file; the 100% gate is
+measured from unit tests only.
 
 The release workflow uses `holepunchto/actions/publish` after lint and coverage
 checks.

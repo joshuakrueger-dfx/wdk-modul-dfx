@@ -21,8 +21,8 @@
     "lint": "standard",
     "lint:fix": "standard --fix",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --testPathIgnorePatterns=tests/integration.test.js",
-    "test:integration": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/integration.test.js --coverage=false"
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --testPathIgnorePatterns=tests/integration",
+    "test:integration": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/integration/module.test.js --testPathIgnorePatterns=/node_modules/ --coverage=false"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",
@@ -32,6 +32,8 @@
     "big.js": "^7.0.1"
   },
   "devDependencies": {
+    "@tetherto/wdk": "1.0.0-beta.18",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.19",
     "cross-env": "^7.0.3",
     "jest": "^29.7.0",
     "standard": "^17.1.2",
@@ -70,6 +72,10 @@
     "SECURITY.md"
   ],
   "jest": {
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/integration/"
+    ],
     "collectCoverageFrom": [
       "src/**/*.js"
     ],

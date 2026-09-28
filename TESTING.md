@@ -20,8 +20,9 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Unit tests + coverage | `npm run lint && npm run test:coverage` | lint output empty; 837/837 tests; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 43/43 mutations detected, each by 1–60 targeted tests |
+| Integration, sandbox | `npm run test:integration` | 11/11 tests, fresh WDK EVM account per run |
+| Unit tests + coverage | `npm run lint && npm run test:coverage` | lint output empty; 707/707 tests; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 41/41 mutations detected, each by 1–207 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -33,13 +34,13 @@ unless it says so.
 | Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | buy and sell reach an automatic AML `Pass`; rejection and refund reach `Returned`; the module status matches every DFX state observed |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
 | Deployed ERC-4337 account | `cd e2e && node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
-| Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): code, JSDoc and declaration findings fixed; test-convention findings open |
+| Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; second test-skill pass applied |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
 
 ## 1. Unit tests
 
-`npm run lint && npm run test:coverage` (Node 22.22.0): `standard` prints nothing; Jest runs 2 suites, 837 tests, all
+`npm run lint && npm run test:coverage` (Node 22.22.0): `standard` prints nothing; Jest runs 2 suites, 707 tests, all
 passing, at 100 % coverage in all four categories. Tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
 transaction state, the account-error allowlist per method, signature normalisation (Solana, Spark), EIP-191 owner
@@ -48,7 +49,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit suite was run in band, and the source was restored. All 43 were detected.
+pattern matched exactly once), the unit suite was run in band, and the source was restored. All 41 were detected. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -287,8 +288,17 @@ request two signatures each.
   fixed; the error classes, `ProviderErrorReason` and the account types are now exported from this module. The
   declarations were type-checked with `tsc --strict` together with a consumer file, including a check that
   `recipient` is rejected in quote options.
-- `wdk-review-tests`: 7 of 11 rules reported (R1–R6, R11) plus conventions (dummy classes instead of mock factories,
-  `DUMMY_` naming, one top-level `describe` per module). Not yet applied; see below.
+- `wdk-review-tests`, first pass: 7 of 11 rules reported (R1–R6, R11) plus conventions. Applied together with the code
+  of conduct's C005 (no runtime type guards on typed parameters): 15 type-only checks and the 131 test cases for
+  type-excluded inputs were removed; value rules, documented `@throws` conditions and all validation of DFX responses
+  remain. The suite was rebuilt: tests only through the public API (signature cases now via the exact `POST /v1/auth`
+  body), dummy account classes, every request and signing call asserted as fixed values inside each test, complete
+  return objects, exact error class, message and reason, one act per test.
+- `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
+  assertions (T001), naming and the integration environment. All fixed except the environment (see below).
+- Integration tests (`npm run test:integration`, `tests/integration/module.test.js`): 11/11 against the DFX sandbox,
+  with a fresh WDK EVM account generated per run and no environment variable. Before this change the three
+  authenticated tests were skipped unless an account module was supplied, so they never ran in the gate.
 
 ## Not covered
 
@@ -299,7 +309,7 @@ request two signatures each.
 - **USDC with real money.** The real purchase was ETH. USDC is covered by quotes and widget tests only.
 - **Deposit detection on a real chain.** The sale in the local tests starts from a deposit row as the blockchain scan
   would write it; the scan itself is not exercised.
-- **Test conventions of `wdk-review-tests`.** The unit tests have not been restructured to the skill: `signature.test.js`
-  tests an internal module (R4); many tests do not assert the routes called or every returned field (R2, R6); 87 tests
-  cover inputs the parameter types exclude (R11). Removing those, as R11 asks, also leaves the matching runtime checks
-  untested; whether to keep those checks is open.
+- **Integration environment per `wdk-review-tests`.** The skill asks for a local, forked environment and never a live
+  testnet. The integration tests run against the DFX sandbox instead, following Tether's integration guide §4.6
+  ("integration tests against testnets where applicable"); an HTTP fiat API has no chain state to fork. This
+  deviation is not yet confirmed by Tether.

@@ -1,7 +1,7 @@
 // Copyright 2026 DFX AG
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, jest, test } from '@jest/globals'
+import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
@@ -11,1446 +11,1726 @@ import {
 } from '@tetherto/wdk-wallet/protocols'
 import DfxProtocol, { DfxProtocol as NamedDfxProtocol, IFiatProtocol } from '../index.js'
 import * as publicApi from '../index.js'
+import { expectRequests, failure, httpRequest } from './helpers.js'
 
-const DUMMY_ASSETS = [
-  { id: 1, name: 'ETH', uniqueName: 'Ethereum/ETH', blockchain: 'Ethereum', description: 'Ether', decimals: 18, buyable: true, sellable: true },
-  { id: 2, name: 'USDT', uniqueName: 'Ethereum/USDT', blockchain: 'Ethereum', description: 'Tether', decimals: 6, buyable: true, sellable: true },
-  { id: 3, name: 'USDT', uniqueName: 'Tron/USDT', blockchain: 'Tron', description: 'Tether', decimals: 6, buyable: true, sellable: true },
-  { id: 4, name: 'BTC', uniqueName: 'Bitcoin/BTC', blockchain: 'Bitcoin', description: 'Bitcoin', buyable: true, sellable: true },
-  { id: 5, name: 'BUY', uniqueName: 'Ethereum/BUY', blockchain: 'Ethereum', description: 'Buy only', decimals: 2, buyable: true, sellable: false },
-  { id: 6, name: 'SELL', uniqueName: 'Ethereum/SELL', blockchain: 'Ethereum', description: 'Sell only', decimals: 2, buyable: false, sellable: true },
-  { id: 7, name: 'OFF', uniqueName: 'Ethereum/OFF', blockchain: 'Ethereum', decimals: 2, buyable: false, sellable: false }
-]
-const DUMMY_FIAT = [
-  { id: 11, name: 'EUR', buyable: true, sellable: true },
-  { id: 12, name: 'CHF', buyable: true, sellable: true },
-  { id: 13, name: 'JPY', buyable: true, sellable: false },
-  { id: 14, name: 'BHD', buyable: false, sellable: true },
-  { id: 15, name: 'ZZZ', buyable: true, sellable: true },
-  { id: 16, name: 'USD', buyable: false, sellable: false }
-]
-const DUMMY_COUNTRIES = [
-  { symbol: 'CH', name: 'Switzerland', bankAllowed: true, cardAllowed: false, locationAllowed: false },
-  { symbol: 'US', name: 'United States', bankAllowed: false, cardAllowed: true, locationAllowed: true }
-]
-const DUMMY_BUY = '{"isValid":true,"amount":100,"estimatedAmount":0.123456789012345678,"rate":810.000000000000001,"fees":{"total":1.23}}'
-const DUMMY_SELL = '{"isValid":true,"amount":0.123456789012345678,"estimatedAmount":100,"rate":0.00125,"fees":{"total":0.9},"feesTarget":{"total":1.23}}'
-const DUMMY_DETAIL = { uid: '123', type: 'Buy', state: 'Completed', inputAssetId: 11, inputAsset: 'EUR', outputAssetId: 1, outputAsset: 'Ethereum/ETH', outputBlockchain: 'Ethereum' }
-const OPTIONS = { cryptoAsset: 'ETH', fiatCurrency: 'EUR', fiatAmount: 10000n }
-const DUMMY_ADDRESS = '0x0000000000000000000000000000000000000001'
+const fetchMock = jest.fn()
+const getAddressMock = jest.fn()
+const signMock = jest.fn()
+const transportMock = jest.fn()
+const bodyTextMock = jest.fn()
+const timerMock = jest.fn()
+globalThis.fetch = transportMock
 
-function response (data, status = 200) {
-  return { ok: status >= 200 && status < 300, status, text: jest.fn().mockResolvedValue(typeof data === 'string' ? data : JSON.stringify(data)) }
-}
-
-// Explicit route lookup makes unexpected calls fail instead of borrowing another endpoint's fixture.
-function setup (config = {}, overrides = {}, account = { getAddress: jest.fn().mockResolvedValue(DUMMY_ADDRESS), sign: jest.fn().mockResolvedValue('dummy-signature') }) {
-  const routes = {
-    'GET /v1/asset': response(DUMMY_ASSETS),
-    'GET /v1/fiat': response(DUMMY_FIAT),
-    'GET /v1/country': response(DUMMY_COUNTRIES),
-    [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: '[dev]_Sign this exact message', blockchains: ['Ethereum'] }),
-    'POST /v1/auth': response({ accessToken: 'dummy-session' }, 201),
-    'PUT /v1/buy/quote': response(DUMMY_BUY),
-    'PUT /v1/sell/quote': response(DUMMY_SELL),
-    'GET /v1/transaction/detail/single?uid=123': response(DUMMY_DETAIL),
-    ...overrides
+class DummyReadOnlyAccount {
+  async getAddress (...args) {
+    return getAddressMock(...args)
   }
-  const fetch = jest.fn(async (url, init) => {
-    const parsed = new URL(url)
-    const value = routes[`${init.method} ${parsed.pathname}${parsed.search}`]
-    if (value === undefined) throw new ProviderError('Unexpected test route', { reason: ProviderErrorReason.INTERNAL_SERVER_ERROR })
-    return typeof value === 'function' ? value(init) : value
-  })
-  return { protocol: new DfxProtocol(account, { fetch, ...config }), fetch, account, routes }
 }
 
-function request (fetch, path, method, body, token, environment = 'production') {
-  const base = environment === 'sandbox' ? 'https://dev.api.dfx.swiss' : 'https://api.dfx.swiss'
-  const call = fetch.mock.calls.find(([url, init]) => url === `${base}${path}` && init.method === method)
-  const headers = { Accept: 'application/json' }
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-  if (token !== undefined) headers.Authorization = `Bearer ${token}`
-  expect(fetch).toHaveBeenCalledWith(`${base}${path}`, { method, headers, body, signal: call[1].signal })
-  expect(call[1].signal.aborted).toBe(false)
+class DummyAccount extends DummyReadOnlyAccount {
+  async sign (...args) {
+    return signMock(...args)
+  }
 }
-
-// Public test key 1. The expected EOA is fixed independently of recovery.
-const OWNER_KEY = Uint8Array.from([...new Array(31).fill(0), 1])
-const OWNER_ADDRESS = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
-const ACCOUNT_MESSAGE = 'Account challenge: Grüezi 👋'
-const OWNER_MESSAGE = 'Owner challenge: bitte anmelden 🔑'
-// Independent ethers Wallet.signMessage vector, public private-key scalar 2.
-const ETHERS_MESSAGE = 'By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address. Grüße ✓ 0xabc'
-const ETHERS_SIGNATURE = '0x97ef3091c721f0afe35f3211adf256f2ce0231a7f7efebee90bce4ce43ffe0c84ca2dba2bb88d3e89b561d9b4c9d79a929e2d896cdbc65f5e1556dbd9ef20ae21c'
-const ETHERS_ADDRESS = '0x2b5ad5c4795c026514f8317c7a215e218dccd6cf'
-
-function ownerSignature (message, vOffset = 27) {
-  const payload = Buffer.from(message, 'utf8')
-  const digest = keccak_256(Buffer.concat([
-    Buffer.from(`\x19Ethereum Signed Message:\n${payload.length}`, 'utf8'), payload
-  ]))
-  const signature = secp256k1.sign(digest, OWNER_KEY, { prehash: false, format: 'recovered' })
-  return '0x' + Buffer.from(signature.subarray(1)).toString('hex') + (signature[0] + vOffset).toString(16).padStart(2, '0')
-}
-
-function ownerSetup (network = 'Ethereum', address = DUMMY_ADDRESS, vOffset = 27) {
-  return setup({ network }, {
-    'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: network }]),
-    [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: ACCOUNT_MESSAGE }),
-    [`GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`]: response({ message: OWNER_MESSAGE }),
-    [`GET /v1/auth/signMessage?address=${address}`]: response({ message: ACCOUNT_MESSAGE })
-  }, {
-    getAddress: jest.fn().mockResolvedValue(address),
-    sign: jest.fn(async message => ownerSignature(message, vOffset))
-  })
-}
-
-function authCalls (fetch) {
-  return fetch.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/auth'))
-}
-
-async function failure (promise, ErrorClass, message, reason) {
-  const error = await promise.then(() => undefined, error => error)
-  expect(error?.constructor).toBe(ErrorClass)
-  expect(error?.message).toBe(message)
-  if (reason !== undefined) expect(error.reason).toBe(reason)
-  return error
-}
-
-describe('native decimal fallbacks', () => {
-  const natives = [['Bitcoin', 'BTC'], ['Lightning', 'BTC'], ['Arkade', 'BTC'], ['Firo', 'FIRO']]
-
-  test.each(natives.flatMap(([blockchain, name]) => [null, undefined, 0, 6].map(decimals =>
-    [blockchain, name, decimals]
-  )))('lists %s/%s with API decimals %s taking precedence', async (blockchain, name, decimals) => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain, name, decimals }])
-    })
-    expect(await protocol.getSupportedCryptoAssets()).toEqual([
-      { code: name, networkCode: blockchain.toLowerCase(), decimals: decimals ?? 8, name: 'Bitcoin' }
-    ])
-  })
-
-  test.each(natives.flatMap(([blockchain, name]) => ['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    [null, undefined, 6].map(decimals => [blockchain, name, method, decimals])
-  )))('%s/%s %s uses resolved decimals %s in request and response amounts', async (blockchain, name, method, decimals) => {
-    const { protocol, fetch } = setup({ network: blockchain }, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain, name, decimals }]),
-      'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 1.25, fees: { total: 1 } }),
-      'PUT /v1/sell/quote': response({ isValid: true, amount: 1.25, estimatedAmount: 100, feesTarget: { total: 1 } })
-    })
-    const units = 125n * 10n ** BigInt((decimals ?? 8) - 2)
-    const result = await protocol[method]({ cryptoAsset: name, fiatCurrency: 'EUR', cryptoAmount: units })
-    if (method.startsWith('quote')) {
-      expect(result).toEqual({ cryptoAmount: units, fiatAmount: 10000n, fee: 100n, rate: '80' })
-      const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
-      expect(body[method === 'quoteBuy' ? 'targetAmount' : 'amount']).toBe(1.25)
-    } else {
-      const url = new URL(result[`${method}Url`])
-      expect(url.searchParams.get(method === 'buy' ? 'amount-out' : 'amount-in')).toBe('1.25')
-      expect(url.searchParams.get('blockchain')).toBe(blockchain)
-    }
-  })
-
-  test.each([['Bitcoin', 'UNKNOWN'], ['Unknown', 'BTC'], ['Unknown', 'FIRO']])('excludes unknown %s/%s without decimals', async (blockchain, name) => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain, name }])
-    })
-    expect(await protocol.getSupportedCryptoAssets()).toEqual([])
-  })
-
-  test.each([-1, 1.5, 256, 'invalid'])('does not hide invalid native API decimals %s', async decimals => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], decimals }])
-    })
-    await expect(protocol.getSupportedCryptoAssets()).rejects.toBeInstanceOf(ProviderError)
-  })
-})
-
-describe('EVM signing-owner authentication', () => {
-  test('authenticates the ethers UTF-8 reference owner through the public API', async () => {
-    const { protocol, account, fetch } = setup({ network: 'ethereum' }, {
-      [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: ETHERS_MESSAGE }),
-      [`GET /v1/auth/signMessage?address=${ETHERS_ADDRESS}`]: response({ message: ETHERS_MESSAGE })
-    })
-    account.sign.mockResolvedValue(ETHERS_SIGNATURE)
-    await protocol.buy(OPTIONS)
-    expect(account.sign.mock.calls).toEqual([[ETHERS_MESSAGE], [ETHERS_MESSAGE]])
-    expect(authCalls(fetch).map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
-      ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-      ['GET', `/v1/auth/signMessage?address=${ETHERS_ADDRESS}`],
-      ['POST', '/v1/auth']
-    ])
-    expect(JSON.parse(authCalls(fetch)[2][1].body)).toEqual({ address: ETHERS_ADDRESS, signature: ETHERS_SIGNATURE, blockchain: 'Ethereum' })
-  })
-
-  test.each(['unauthorized', 'missing token', 'owner challenge failure'])(
-    'repeats owner recovery after %s', async mode => {
-      const { protocol, account, fetch, routes } = ownerSetup()
-      if (mode === 'unauthorized') routes['POST /v1/auth'] = response({ message: 'Invalid signature' }, 401)
-      if (mode === 'missing token') routes['POST /v1/auth'] = response({})
-      if (mode === 'owner challenge failure') routes[`GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`] = response({ message: 'Challenge unavailable' }, 401)
-      const message = mode === 'unauthorized' ? 'Invalid signature' : mode === 'missing token' ? 'Unexpected DFX response' : 'Challenge unavailable'
-      const reason = mode === 'missing token' ? ProviderErrorReason.INTERNAL_SERVER_ERROR : ProviderErrorReason.UNAUTHORIZED
-      await failure(protocol.buy(OPTIONS), ProviderError, message, reason)
-      expect(account.sign.mock.calls).toEqual(mode === 'owner challenge failure' ? [[ACCOUNT_MESSAGE]] : [[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-      const firstRequests = [
-        ['GET', '/v1/asset'], ['GET', '/v1/fiat'],
-        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-        ['GET', `/v1/auth/signMessage?address=${OWNER_ADDRESS}`]
-      ]
-      if (mode !== 'owner challenge failure') firstRequests.push(['POST', '/v1/auth'])
-      expect(fetch.mock.calls.map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual(firstRequests)
-      routes['POST /v1/auth'] = response({ accessToken: 'retry-session' })
-      routes[`GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`] = response({ message: OWNER_MESSAGE })
-      account.sign.mockClear()
-      fetch.mockClear()
-      await protocol.buy(OPTIONS)
-      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-      expect(fetch.mock.calls.map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
-        ['GET', '/v1/asset'], ['GET', '/v1/fiat'],
-        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-        ['GET', `/v1/auth/signMessage?address=${OWNER_ADDRESS}`],
-        ['POST', '/v1/auth']
-      ])
-      expect(JSON.parse(authCalls(fetch)[2][1].body)).toEqual({ address: OWNER_ADDRESS, signature: ownerSignature(OWNER_MESSAGE), blockchain: 'Ethereum' })
-    }
-  )
-
-  test('does not cache an unrelated signer recovered from a signature over a foreign digest', async () => {
-    const { protocol, account, fetch, routes } = ownerSetup()
-    account.sign.mockResolvedValue(ETHERS_SIGNATURE)
-    routes['POST /v1/auth'] = response({ message: 'Invalid signature' }, 401)
-    // Accept any owner challenge in this fixture; its address must stay identical on retry.
-    const routeFetch = fetch.getMockImplementation()
-    fetch.mockImplementation(async (url, init) => {
-      const parsed = new URL(url)
-      if (parsed.pathname === '/v1/auth/signMessage' && parsed.searchParams.get('address') !== DUMMY_ADDRESS) {
-        return response({ message: OWNER_MESSAGE })
-      }
-      return routeFetch(url, init)
-    })
-    let recoveredAddress
-    for (let attempt = 0; attempt < 2; attempt++) {
-      account.sign.mockClear()
-      fetch.mockClear()
-      await failure(protocol.buy(OPTIONS), ProviderError, 'Invalid signature', ProviderErrorReason.UNAUTHORIZED)
-      const calls = authCalls(fetch)
-      if (attempt === 0) recoveredAddress = JSON.parse(calls[2][1].body).address
-      expect(recoveredAddress).toMatch(/^0x[0-9a-f]{40}$/)
-      expect(recoveredAddress).not.toBe(ETHERS_ADDRESS)
-      expect(recoveredAddress).not.toBe(DUMMY_ADDRESS)
-      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-      expect(fetch.mock.calls.map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
-        ['GET', '/v1/asset'], ['GET', '/v1/fiat'],
-        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-        ['GET', `/v1/auth/signMessage?address=${recoveredAddress}`],
-        ['POST', '/v1/auth']
-      ])
-      expect(JSON.parse(calls[2][1].body)).toEqual({ address: recoveredAddress, signature: ETHERS_SIGNATURE, blockchain: 'Ethereum' })
-    }
-  })
-
-  test.each(['Tron', 'Solana', 'Bitcoin'].flatMap(network => ['buy', 'sell'].map(method => [network, method])))(
-    '%s %s rejects mismatched delivery before authentication', async (network, method) => {
-      const { protocol, account, fetch } = ownerSetup(network)
-      const field = method === 'buy' ? 'recipient' : 'refundAddress'
-      await failure(protocol[method]({ ...OPTIONS, [field]: 'different-address' }), ValueError, `${field} must match the account address`)
-      expect(account.sign).not.toHaveBeenCalled()
-      expect(authCalls(fetch)).toEqual([])
-      expect(fetch.mock.calls.map(([url, init]) => [init.method, new URL(url).pathname])).toEqual([
-        ['GET', '/v1/asset'], ['GET', '/v1/fiat']
-      ])
-    }
-  )
-
-  test.each(['Ethereum', 'Sepolia', 'BinanceSmartChain', 'Optimism', 'Arbitrum', 'Polygon', 'Base', 'Haqq', 'Gnosis', 'Plasma', 'Citrea', 'CitreaTestnet'])(
-    '%s resolves the owner and reuses its address with one signature on the next login', async network => {
-      const { protocol, account, fetch } = ownerSetup(network.toUpperCase())
-      await protocol.buy(OPTIONS)
-      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-      const calls = authCalls(fetch)
-      expect(calls.map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
-        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-        ['GET', `/v1/auth/signMessage?address=${OWNER_ADDRESS}`],
-        ['POST', '/v1/auth']
-      ])
-      expect(JSON.parse(calls[2][1].body)).toEqual({ address: OWNER_ADDRESS, signature: ownerSignature(OWNER_MESSAGE), blockchain: network })
-      account.sign.mockClear()
-      fetch.mockClear()
-      await protocol.sell(OPTIONS)
-      expect(account.sign.mock.calls).toEqual([[OWNER_MESSAGE]])
-      expect(authCalls(fetch).map(([url]) => new URL(url).pathname + new URL(url).search)).toEqual([
-        `/v1/auth/signMessage?address=${OWNER_ADDRESS}`, '/v1/auth'
-      ])
-      expect(JSON.parse(authCalls(fetch)[1][1].body).address).toBe(OWNER_ADDRESS)
-    }
-  )
-
-  test.each(['buy', 'sell'].flatMap(method => [0, 27].map(offset => [method, offset])))(
-    '%s accepts the owner in uppercase with v offset %s', async (method, offset) => {
-      const { protocol, account, fetch } = ownerSetup('Ethereum', DUMMY_ADDRESS, offset)
-      const field = method === 'buy' ? 'recipient' : 'refundAddress'
-      const result = await protocol[method]({ ...OPTIONS, [field]: '0x' + OWNER_ADDRESS.slice(2).toUpperCase() })
-      expect(new URL(result[`${method}Url`]).searchParams.get('session')).toBe('dummy-session')
-      expect(account.sign).toHaveBeenCalledTimes(2)
-      expect(JSON.parse(authCalls(fetch)[2][1].body).address).toBe(OWNER_ADDRESS)
-    }
-  )
-
-  test.each(['buy', 'sell'].flatMap(method => [false, true].map(cached => [method, cached])))(
-    '%s rejects an explicit Safe delivery address with cached owner %s', async (method, cached) => {
-      const { protocol, account, fetch } = ownerSetup()
-      if (cached) await protocol.buy(OPTIONS)
-      account.sign.mockClear()
-      fetch.mockClear()
-      const field = method === 'buy' ? 'recipient' : 'refundAddress'
-      await failure(protocol[method]({ ...OPTIONS, [field]: DUMMY_ADDRESS }), ValueError,
-        `DFX delivers to the signing owner address ${OWNER_ADDRESS} for this account; ${field} must match it and the smart-account address cannot be used as ${field}`)
-      expect(account.sign.mock.calls).toEqual(cached ? [] : [[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-      expect(authCalls(fetch).map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual(cached ? [] : [
-        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-        ['GET', `/v1/auth/signMessage?address=${OWNER_ADDRESS}`],
-        ['POST', '/v1/auth']
-      ])
-    }
-  )
-
-  test.each([OWNER_ADDRESS, '0x' + OWNER_ADDRESS.slice(2).toUpperCase()])('EOA %s needs one challenge and one signature per login', async address => {
-    const { protocol, account, fetch } = ownerSetup('Ethereum', address)
-    for (let index = 0; index < 2; index++) {
-      account.sign.mockClear()
-      fetch.mockClear()
-      await protocol.buy({ ...OPTIONS, recipient: OWNER_ADDRESS })
-      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE]])
-      expect(authCalls(fetch)).toHaveLength(2)
-      expect(new URL(authCalls(fetch)[0][0]).searchParams.get('address')).toBe(address)
-      expect(JSON.parse(authCalls(fetch)[1][1].body).address).toBe(address)
-    }
-  })
-
-  test.each(['Tron', 'Bitcoin', 'Solana', 'FutureEvm'])('%s leaves a recoverable EVM signature on the account address', async network => {
-    const { protocol, account, fetch } = ownerSetup(network)
-    await protocol.buy({ ...OPTIONS, recipient: DUMMY_ADDRESS })
-    expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE]])
-    expect(authCalls(fetch)).toHaveLength(2)
-    expect(JSON.parse(authCalls(fetch)[1][1].body)).toMatchObject({ address: DUMMY_ADDRESS, signature: ownerSignature(ACCOUNT_MESSAGE) })
-  })
-
-  test.each(['buy', 'sell', 'getTransactionDetail'].flatMap(method =>
-    ['0xsig', 'not-a-signature', '0x' + '00'.repeat(65), '0x' + '11'.repeat(64) + '02'].map(signature => [method, signature])
-  ))(
-    '%s forwards unrecoverable EVM signature %# with the account address and one challenge', async (method, signature) => {
-      const { protocol, account, fetch } = ownerSetup()
-      account.sign.mockResolvedValue(signature)
-      const result = await protocol[method](method === 'getTransactionDetail'
-        ? '123'
-        : { ...OPTIONS, [method === 'buy' ? 'recipient' : 'refundAddress']: DUMMY_ADDRESS })
-      if (method === 'getTransactionDetail') {
-        expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-      } else {
-        expect(new URL(result[`${method}Url`]).searchParams.get('session')).toBe('dummy-session')
-      }
-      expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE]])
-      expect(authCalls(fetch).map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
-        ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`],
-        ['POST', '/v1/auth']
-      ])
-      expect(JSON.parse(authCalls(fetch)[1][1].body)).toMatchObject({ address: DUMMY_ADDRESS, signature })
-    }
-  )
-
-  test('a changed account address and a fresh instance do not borrow the previous owner cache', async () => {
-    const { protocol, account, fetch, routes } = ownerSetup()
-    await protocol.buy(OPTIONS)
-    const nextAddress = '0x0000000000000000000000000000000000000002'
-    routes[`GET /v1/auth/signMessage?address=${nextAddress}`] = response({ message: 'Next account' })
-    account.getAddress.mockResolvedValue(nextAddress)
-    account.sign.mockClear()
-    fetch.mockClear()
-    await protocol.buy(OPTIONS)
-    expect(account.sign.mock.calls).toEqual([['Next account'], [OWNER_MESSAGE]])
-    expect(new URL(authCalls(fetch)[0][0]).searchParams.get('address')).toBe(nextAddress)
-    const fresh = ownerSetup()
-    await fresh.protocol.buy(OPTIONS)
-    expect(fresh.account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-  })
-
-  test('an unrecoverable signature does not prevent owner resolution on a later login', async () => {
-    const { protocol, account, fetch } = ownerSetup()
-    account.sign.mockResolvedValueOnce('invalid-signature')
-    await protocol.buy(OPTIONS)
-    account.sign.mockClear()
-    fetch.mockClear()
-    await protocol.buy(OPTIONS)
-    expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE]])
-    expect(JSON.parse(authCalls(fetch)[2][1].body).address).toBe(OWNER_ADDRESS)
-  })
-
-  test('transaction-detail renewal authenticates the cached owner', async () => {
-    const { protocol, account, fetch, routes } = ownerSetup()
-    let attempts = 0
-    routes['GET /v1/transaction/detail/single?uid=123'] = () => ++attempts === 1 ? response({}, 401) : response(DUMMY_DETAIL)
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    expect(account.sign.mock.calls).toEqual([[ACCOUNT_MESSAGE], [OWNER_MESSAGE], [OWNER_MESSAGE]])
-    expect(authCalls(fetch).filter(([, init]) => init.method === 'POST').map(([, init]) => JSON.parse(init.body).address)).toEqual([OWNER_ADDRESS, OWNER_ADDRESS])
-  })
-})
 
 describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
-  afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks() })
+  beforeEach(() => {
+    fetchMock.mockReset()
+    getAddressMock.mockReset()
+    signMock.mockReset()
+    transportMock.mockReset()
+    globalThis.fetch = transportMock
+    bodyTextMock.mockReset()
+    timerMock.mockReset()
+  })
 
-  test('exports the class by name and default and the WDK interface', () => {
-    expect(NamedDfxProtocol).toBe(DfxProtocol)
-    expect(IFiatProtocol).toBe(WalletFiatProtocol)
-    for (const [name, value] of Object.entries({ AccountRequiredError, ValueError, ProviderError, ProviderRequiredError, BuyError, SellError, MaximumFeeExceededError, NoSuchElementError, ProviderErrorReason })) {
-      expect(publicApi[name]).toBe(value)
+  afterEach(() => {
+    jest.restoreAllMocks()
+    jest.useRealTimers()
+  })
+
+  const DUMMY_ASSETS = [
+    { id: 1, name: 'ETH', uniqueName: 'Ethereum/ETH', blockchain: 'Ethereum', description: 'Ether', decimals: 18, buyable: true, sellable: true },
+    { id: 2, name: 'USDT', uniqueName: 'Ethereum/USDT', blockchain: 'Ethereum', description: 'Tether', decimals: 6, buyable: true, sellable: true },
+    { id: 3, name: 'USDT', uniqueName: 'Tron/USDT', blockchain: 'Tron', description: 'Tether', decimals: 6, buyable: true, sellable: true },
+    { id: 4, name: 'BTC', uniqueName: 'Bitcoin/BTC', blockchain: 'Bitcoin', description: 'Bitcoin', buyable: true, sellable: true },
+    { id: 5, name: 'BUY', uniqueName: 'Ethereum/BUY', blockchain: 'Ethereum', description: 'Buy only', decimals: 2, buyable: true, sellable: false },
+    { id: 6, name: 'SELL', uniqueName: 'Ethereum/SELL', blockchain: 'Ethereum', description: 'Sell only', decimals: 2, buyable: false, sellable: true },
+    { id: 7, name: 'OFF', uniqueName: 'Ethereum/OFF', blockchain: 'Ethereum', decimals: 2, buyable: false, sellable: false }
+  ]
+  const DUMMY_FIAT = [
+    { id: 11, name: 'EUR', buyable: true, sellable: true },
+    { id: 12, name: 'CHF', buyable: true, sellable: true },
+    { id: 13, name: 'JPY', buyable: true, sellable: false },
+    { id: 14, name: 'BHD', buyable: false, sellable: true },
+    { id: 15, name: 'ZZZ', buyable: true, sellable: true },
+    { id: 16, name: 'USD', buyable: false, sellable: false }
+  ]
+  const DUMMY_COUNTRIES = [
+    { symbol: 'CH', name: 'Switzerland', bankAllowed: true, cardAllowed: false, locationAllowed: false },
+    { symbol: 'US', name: 'United States', bankAllowed: false, cardAllowed: true, locationAllowed: true }
+  ]
+  const DUMMY_BUY = '{"isValid":true,"amount":100,"estimatedAmount":0.123456789012345678,"rate":810.000000000000001,"fees":{"total":1.23}}'
+  const DUMMY_SELL = '{"isValid":true,"amount":0.123456789012345678,"estimatedAmount":100,"rate":0.00125,"fees":{"total":0.9},"feesTarget":{"total":1.23}}'
+  const DUMMY_DETAIL = { uid: '123', type: 'Buy', state: 'Completed', inputAssetId: 11, inputAsset: 'EUR', outputAssetId: 1, outputAsset: 'Ethereum/ETH', outputBlockchain: 'Ethereum' }
+  const OPTIONS = { cryptoAsset: 'ETH', fiatCurrency: 'EUR', fiatAmount: 10000n }
+  const DUMMY_ADDRESS = '0x0000000000000000000000000000000000000001'
+  const ACCOUNT_ADDRESS = '0x0000000000000000000000000000000000000001'
+  const EXPECTED_QUOTE = { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }
+  const CATALOG_REQUESTS = [httpRequest('/v1/asset'), httpRequest('/v1/fiat')]
+  const CHALLENGE_REQUEST = httpRequest('/v1/auth/signMessage?address=0x0000000000000000000000000000000000000001')
+  const AUTH_REQUEST = httpRequest('/v1/auth', 'POST', '{"address":"0x0000000000000000000000000000000000000001","signature":"dummy-signature"}')
+  const ETH_AUTH_REQUEST = httpRequest('/v1/auth', 'POST', '{"address":"0x0000000000000000000000000000000000000001","signature":"dummy-signature","blockchain":"Ethereum"}')
+  const DETAIL_REQUEST = httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-session')
+  const DETAIL_REQUESTS = [CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST, ...CATALOG_REQUESTS]
+  const ETH_WIDGET_REQUESTS = [...CATALOG_REQUESTS, CHALLENGE_REQUEST, ETH_AUTH_REQUEST]
+  const BUY_QUOTE_REQUEST = httpRequest('/v1/buy/quote', 'PUT', '{"currency":{"name":"EUR"},"asset":{"id":1},"specialCode":"","paymentMethod":"Bank","amount":100}')
+  const SELL_QUOTE_REQUEST = httpRequest('/v1/sell/quote', 'PUT', '{"currency":{"name":"EUR"},"asset":{"id":1},"specialCode":"","targetAmount":100}')
+
+  function expectInteractions (requests, signatures = [], addresses = []) {
+    expectRequests(fetchMock.mock.calls, requests)
+    expect(signMock.mock.calls).toEqual(signatures)
+    expect(getAddressMock.mock.calls).toEqual(addresses)
+  }
+
+  function widget (method, { token = 'dummy-session', asset = 'ETH', blockchain = 'Ethereum', amount = '100', crypto = false } = {}) {
+    const assets = method === 'buy' ? `asset-in=EUR&asset-out=${asset}` : `asset-in=${asset}&asset-out=EUR`
+    const field = (method === 'buy') !== crypto ? 'amount-in' : 'amount-out'
+    return { [`${method}Url`]: `https://app.dfx.swiss/${method}?session=${token}&lang=en&${assets}&blockchain=${blockchain}&${field}=${amount}` }
+  }
+
+  function response (data, status = 200) {
+    const result = { ok: status >= 200 && status < 300, status, async text () { return typeof data === 'string' ? data : JSON.stringify(data) } }
+    return result
+  }
+
+  // Explicit route lookup makes unexpected calls fail instead of borrowing another endpoint's fixture.
+  function setup (config = {}, overrides = {}, account = new DummyAccount()) {
+    getAddressMock.mockReset().mockResolvedValue(DUMMY_ADDRESS)
+    signMock.mockReset().mockResolvedValue('dummy-signature')
+    const routes = {
+      'GET /v1/asset': response(DUMMY_ASSETS),
+      'GET /v1/fiat': response(DUMMY_FIAT),
+      'GET /v1/country': response(DUMMY_COUNTRIES),
+      [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: '[dev]_Sign this exact message', blockchains: ['Ethereum'] }),
+      'POST /v1/auth': response({ accessToken: 'dummy-session' }, 201),
+      'PUT /v1/buy/quote': response(DUMMY_BUY),
+      'PUT /v1/sell/quote': response(DUMMY_SELL),
+      'GET /v1/transaction/detail/single?uid=123': response(DUMMY_DETAIL),
+      ...overrides
     }
+    const base = config.environment === 'sandbox' ? 'https://dev.api.dfx.swiss' : 'https://api.dfx.swiss'
+    const fetch = fetchMock.mockReset().mockImplementation(async (url, init) => {
+      const route = Object.keys(routes).find(route => url === base + route.slice(route.indexOf(' ') + 1) && init.method === route.slice(0, route.indexOf(' ')))
+      const value = routes[route]
+      if (value === undefined) throw new ProviderError('Unexpected test route', { reason: ProviderErrorReason.INTERNAL_SERVER_ERROR })
+      const result = typeof value === 'function' ? await value(init) : value
+      return result
+    })
+    return { protocol: new DfxProtocol(account, { fetch, ...config }), fetch, account, routes }
+  }
+
+  const OWNER_ADDRESS = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
+  const DUMMY_ACCOUNT_MESSAGE = 'Account challenge: Grüezi 👋'
+  const DUMMY_OWNER_MESSAGE = 'Owner challenge: bitte anmelden 🔑'
+
+  function ownerSignature (message, vOffset = 27) {
+    // Public test key 1. The expected EOA is fixed independently of recovery.
+    const OWNER_KEY = Uint8Array.from([...new Array(31).fill(0), 1])
+    const payload = Buffer.from(message, 'utf8')
+    const digest = keccak_256(Buffer.concat([
+      Buffer.from(`\x19Ethereum Signed Message:\n${payload.length}`, 'utf8'), payload
+    ]))
+    const signature = secp256k1.sign(digest, OWNER_KEY, { prehash: false, format: 'recovered' })
+    return '0x' + Buffer.from(signature.subarray(1)).toString('hex') + (signature[0] + vOffset).toString(16).padStart(2, '0')
+  }
+
+  function ownerSetup (network = 'Ethereum', address = DUMMY_ADDRESS, vOffset = 27) {
+    const result = setup({ network }, {
+      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: network }]),
+      [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: DUMMY_ACCOUNT_MESSAGE }),
+      [`GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`]: response({ message: DUMMY_OWNER_MESSAGE }),
+      [`GET /v1/auth/signMessage?address=${address}`]: response({ message: DUMMY_ACCOUNT_MESSAGE })
+    })
+    getAddressMock.mockResolvedValue(address)
+    signMock.mockImplementation(async message => ownerSignature(message, vOffset))
+    return result
+  }
+
+  const OWNER_AUTH_REQUESTS = [
+    CHALLENGE_REQUEST,
+    httpRequest(`/v1/auth/signMessage?address=${OWNER_ADDRESS}`),
+    httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER_ADDRESS, signature: ownerSignature(DUMMY_OWNER_MESSAGE), blockchain: 'Ethereum' }))
+  ]
+
+  const NATIVE_ASSETS = [['Bitcoin', 'BTC'], ['Lightning', 'BTC'], ['Arkade', 'BTC'], ['Firo', 'FIRO']]
+  const INVALID_EXTERNAL_IDS = ['', '  ', 'x'.repeat(257), ' leading', 'trailing ', 'a b', '<id>', 'id>', 'a/b', 'a?b', 'a&b', 'a=b', 'a+b', 'a#b', 'a%b', 'ümlaut', 'a\nb', 'a\n', 'a\r', 'a\t', 'a\u0000', 'a\u200b']
+  const EXTERNAL_ID_MESSAGE = 'externalTransactionId must contain 1–256 characters from A-Z, a-z, 0-9, dot (.), underscore (_), colon (:) and hyphen (-)'
+
+  function tradeCases (METHOD) {
+    test.each(NATIVE_ASSETS.flatMap(([NETWORK, CRYPTO_ASSET]) => [METHOD].flatMap(CASE_METHOD =>
+      [null, undefined, 6].map(DUMMY_DECIMALS => [NETWORK, CRYPTO_ASSET, CASE_METHOD, DUMMY_DECIMALS])
+    )))('%s/%s %s uses resolved decimals %s in request and response amounts', async (NETWORK, CRYPTO_ASSET, CASE_METHOD, DUMMY_DECIMALS) => {
+      const { protocol } = setup({ network: NETWORK }, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain: NETWORK, name: CRYPTO_ASSET, decimals: DUMMY_DECIMALS }]),
+        'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 1.25, fees: { total: 1 } }),
+        'PUT /v1/sell/quote': response({ isValid: true, amount: 1.25, estimatedAmount: 100, feesTarget: { total: 1 } })
+      })
+      const CRYPTO_AMOUNT = 125n * 10n ** BigInt((DUMMY_DECIMALS ?? 8) - 2)
+      const result = await protocol[CASE_METHOD]({ cryptoAsset: CRYPTO_ASSET, fiatCurrency: 'EUR', cryptoAmount: CRYPTO_AMOUNT })
+      if (CASE_METHOD.startsWith('quote')) {
+        expect(result).toEqual({ cryptoAmount: CRYPTO_AMOUNT, fiatAmount: 10000n, fee: 100n, rate: '80' })
+        const DIRECTION = CASE_METHOD === 'quoteBuy' ? 'buy' : 'sell'
+        const PAYMENT_FIELD = DIRECTION === 'buy' ? ',"paymentMethod":"Bank"' : ''
+        const FIELD = DIRECTION === 'buy' ? 'targetAmount' : 'amount'
+        expectInteractions([...CATALOG_REQUESTS,
+          httpRequest(`/v1/${DIRECTION}/quote`, 'PUT', `{"currency":{"name":"EUR"},"asset":{"id":4},"specialCode":""${PAYMENT_FIELD},"${FIELD}":1.25}`)])
+      } else {
+        expect(result).toEqual(widget(CASE_METHOD, { asset: CRYPTO_ASSET, blockchain: NETWORK, amount: '1.25', crypto: true }))
+        expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+          httpRequest('/v1/auth', 'POST', JSON.stringify({ address: DUMMY_ADDRESS, signature: 'dummy-signature', blockchain: NETWORK }))],
+        [['[dev]_Sign this exact message']], [[]])
+      }
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD =>
+      ['', '  '].map(NETWORK => [CASE_METHOD, NETWORK])
+    ))('%s rejects invalid per-operation networks %#', async (CASE_METHOD, NETWORK) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, config: { network: NETWORK } }), ValueError, 'network must be a non-empty string')
+      expectInteractions([])
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD =>
+      ['ETH', 'eth'].map(CRYPTO_ASSET => [CASE_METHOD, CRYPTO_ASSET])
+    ))('%s prefers the unique exact asset spelling %s on one network', async (CASE_METHOD, CRYPTO_ASSET) => {
+      const { protocol } = setup({ network: 'ethereum' }, {
+        'GET /v1/asset': response([
+          { ...DUMMY_ASSETS[0], id: 8, name: 'eth' }, DUMMY_ASSETS[0]
+        ])
+      })
+      const result = await protocol[CASE_METHOD]({ ...OPTIONS, cryptoAsset: CRYPTO_ASSET, config: {} })
+      if (CASE_METHOD.startsWith('quote')) {
+        expect(result).toEqual(EXPECTED_QUOTE)
+        const DIRECTION = CASE_METHOD === 'quoteBuy' ? 'buy' : 'sell'
+        const PAYMENT_FIELD = DIRECTION === 'buy' ? ',"paymentMethod":"Bank"' : ''
+        const FIELD = DIRECTION === 'buy' ? 'amount' : 'targetAmount'
+        expectInteractions([...CATALOG_REQUESTS,
+          httpRequest(`/v1/${DIRECTION}/quote`, 'PUT', `{"currency":{"name":"EUR"},"asset":{"id":${CRYPTO_ASSET === 'ETH' ? 1 : 8}},"specialCode":""${PAYMENT_FIELD},"${FIELD}":100}`)])
+      } else {
+        expect(result).toEqual(widget(CASE_METHOD, { asset: CRYPTO_ASSET }))
+        expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+      }
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD => [
+      ['Eth', ['ETH', 'eth']],
+      ['ETH', ['ETH', 'ETH']]
+    ].map(values => [CASE_METHOD, ...values])))('%s rejects unresolved asset spelling on one network %#', async (CASE_METHOD, CRYPTO_ASSET, DUMMY_NAMES) => {
+      const { protocol } = setup({ network: 'ethereum' }, {
+        'GET /v1/asset': response(DUMMY_NAMES.map((DUMMY_NAME, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name: DUMMY_NAME, blockchain: index === 0 ? 'Ethereum' : 'ETHEREUM' })))
+      })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, cryptoAsset: CRYPTO_ASSET }), ValueError,
+        `Ambiguous asset spelling ${CRYPTO_ASSET} on network ethereum`)
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD =>
+      ['EUR', 'eur'].map(FIAT_CURRENCY => [CASE_METHOD, FIAT_CURRENCY])
+    ))('%s matches input %s to the uppercase fiat catalog entry and excludes lowercase rows', async (CASE_METHOD, FIAT_CURRENCY) => {
+      const { protocol } = setup({ network: 'ethereum' }, {
+        'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], id: 18, name: 'eur' }, DUMMY_FIAT[0]])
+      })
+      const result = await protocol[CASE_METHOD]({ ...OPTIONS, fiatCurrency: FIAT_CURRENCY })
+      if (CASE_METHOD.startsWith('quote')) {
+        expect(result).toEqual(EXPECTED_QUOTE)
+        expectInteractions([...CATALOG_REQUESTS, CASE_METHOD === 'quoteBuy' ? BUY_QUOTE_REQUEST : SELL_QUOTE_REQUEST])
+      } else {
+        expect(result).toEqual(widget(CASE_METHOD))
+        expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+      }
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD => [
+      ['Eur', ['EUR', 'EUR']], ['EUR', ['EUR', 'EUR']]
+    ].map(values => [CASE_METHOD, ...values])))('%s rejects unresolved fiat collisions %#', async (CASE_METHOD, FIAT_CURRENCY, DUMMY_NAMES) => {
+      const { protocol } = setup({ network: 'ethereum' }, {
+        'GET /v1/fiat': response(DUMMY_NAMES.map((DUMMY_NAME, index) => ({ ...DUMMY_FIAT[0], id: index + 11, name: DUMMY_NAME })))
+      })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, fiatCurrency: FIAT_CURRENCY }), ValueError, `Ambiguous fiat currency: ${FIAT_CURRENCY}`)
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD =>
+      ['eur', 'EUR'].map(FIAT_CURRENCY => [CASE_METHOD, FIAT_CURRENCY])
+    ))('%s rejects input %s when only a lowercase fiat catalog row exists', async (CASE_METHOD, FIAT_CURRENCY) => {
+      const { protocol } = setup({ network: 'ethereum' }, {
+        'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], name: 'eur' }])
+      })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, fiatCurrency: FIAT_CURRENCY }), ValueError,
+        `Unsupported ${CASE_METHOD.toLowerCase().includes('buy') ? 'buy' : 'sell'} fiat currency: ${FIAT_CURRENCY}`)
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD =>
+      [{}, { fiatAmount: 1n, cryptoAmount: 1n }].map(AMOUNTS => [CASE_METHOD, AMOUNTS])
+    ))('%s rejects invalid amount selection %#', async (CASE_METHOD, AMOUNTS) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...AMOUNTS }), ValueError, 'Exactly one of fiatAmount and cryptoAmount must be supplied')
+      expectInteractions([])
+    })
+
+    test.each([METHOD])('%s rejects input precision loss', async CASE_METHOD => {
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', cryptoAmount: 123456789012345678n }), ValueError, 'amount exceeds the precision the DFX API accepts')
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([METHOD])('%s rejects assets with missing decimals', async CASE_METHOD => {
+      const { protocol } = setup({ network: 'bitcoin' }, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], name: 'UNKNOWN' }])
+      })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, cryptoAsset: 'UNKNOWN' }), ValueError, 'Missing decimals for Bitcoin/UNKNOWN')
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([
+      ['buy', 'SELL', 'EUR', 'Unsupported buy asset or network: SELL'],
+      ['quoteBuy', 'SELL', 'EUR', 'Unsupported buy asset or network: SELL'],
+      ['sell', 'BUY', 'EUR', 'Unsupported sell asset or network: BUY'],
+      ['quoteSell', 'BUY', 'EUR', 'Unsupported sell asset or network: BUY'],
+      ['buy', 'ETH', 'BHD', 'Unsupported buy fiat currency: BHD'],
+      ['quoteBuy', 'ETH', 'BHD', 'Unsupported buy fiat currency: BHD'],
+      ['sell', 'ETH', 'JPY', 'Unsupported sell fiat currency: JPY'],
+      ['quoteSell', 'ETH', 'JPY', 'Unsupported sell fiat currency: JPY'],
+      ['quoteBuy', 'ETH', 'ZZZ', 'Unsupported buy fiat currency: ZZZ'],
+      ['quoteBuy', 'ETH', 'XXX', 'Unsupported buy fiat currency: XXX'],
+      ['quoteBuy', 'UNKNOWN', 'EUR', 'Unsupported buy asset or network: UNKNOWN']
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s enforces direction and supported metadata', async (CASE_METHOD, CRYPTO_ASSET, FIAT_CURRENCY, EXPECTED_MESSAGE) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, cryptoAsset: CRYPTO_ASSET, fiatCurrency: FIAT_CURRENCY }), ValueError, EXPECTED_MESSAGE)
+      expectInteractions(CATALOG_REQUESTS)
+    })
+  }
+
+  function widgetCases (METHOD) {
+    test.each(['Ethereum', 'Sepolia', 'BinanceSmartChain', 'Optimism', 'Arbitrum', 'Polygon', 'Base', 'Haqq', 'Gnosis', 'Plasma', 'Citrea', 'CitreaTestnet'])(
+      '%s resolves the owner and reuses its address with one signature on the next login', async NETWORK => {
+        const { protocol } = ownerSetup(NETWORK.toUpperCase())
+        await protocol[METHOD === 'buy' ? 'sell' : 'buy'](OPTIONS)
+
+        const result = await protocol[METHOD](OPTIONS)
+
+        expect(result).toEqual(widget(METHOD, { blockchain: NETWORK.toUpperCase() }))
+        expectInteractions([
+          ...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+          httpRequest(`/v1/auth/signMessage?address=${OWNER_ADDRESS}`),
+          httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER_ADDRESS, signature: ownerSignature(DUMMY_OWNER_MESSAGE), blockchain: NETWORK })),
+          ...CATALOG_REQUESTS,
+          httpRequest(`/v1/auth/signMessage?address=${OWNER_ADDRESS}`),
+          httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER_ADDRESS, signature: ownerSignature(DUMMY_OWNER_MESSAGE), blockchain: NETWORK }))
+        ], [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[], []])
+      }
+    )
+
+    test.each(['Tron', 'Solana', 'Bitcoin'].flatMap(NETWORK => [METHOD].map(CASE_METHOD => [NETWORK, CASE_METHOD])))(
+      '%s %s rejects mismatched delivery before authentication', async (NETWORK, CASE_METHOD) => {
+        const { protocol } = ownerSetup(NETWORK)
+        const FIELD = CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress'
+        await failure(protocol[CASE_METHOD]({ ...OPTIONS, [FIELD]: 'dummy-different-address' }), ValueError, `${FIELD} must match the account address`)
+        expectInteractions(CATALOG_REQUESTS, [], [[]])
+      }
+    )
+
+    test.each([METHOD].flatMap(CASE_METHOD => [0, 27].map(V_OFFSET => [CASE_METHOD, V_OFFSET])))(
+      '%s accepts the owner in uppercase with v offset %s', async (CASE_METHOD, V_OFFSET) => {
+        const { protocol } = ownerSetup('Ethereum', DUMMY_ADDRESS, V_OFFSET)
+        const FIELD = CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress'
+        const result = await protocol[CASE_METHOD]({ ...OPTIONS, [FIELD]: '0x' + OWNER_ADDRESS.slice(2).toUpperCase() })
+        expect(result).toEqual(widget(CASE_METHOD))
+        expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+          httpRequest(`/v1/auth/signMessage?address=${OWNER_ADDRESS}`),
+          httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER_ADDRESS, signature: ownerSignature(DUMMY_OWNER_MESSAGE, V_OFFSET), blockchain: 'Ethereum' }))],
+        [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[]])
+      }
+    )
+
+    test.each([METHOD].flatMap(CASE_METHOD => [false, true].map(CACHE_OWNER => [CASE_METHOD, CACHE_OWNER])))(
+      '%s rejects an explicit Safe delivery address with cached owner %s', async (CASE_METHOD, CACHE_OWNER) => {
+        const { protocol } = ownerSetup()
+        if (CACHE_OWNER) await protocol.getTransactionDetail('123')
+        const FIELD = CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress'
+        await failure(protocol[CASE_METHOD]({ ...OPTIONS, [FIELD]: ACCOUNT_ADDRESS }), ValueError,
+          `DFX delivers to the signing owner address ${OWNER_ADDRESS} for this account; ${FIELD} must match it and the smart-account address cannot be used as ${FIELD}`)
+        const AUTH_REQUESTS = [CHALLENGE_REQUEST,
+          httpRequest(`/v1/auth/signMessage?address=${OWNER_ADDRESS}`),
+          httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER_ADDRESS, signature: ownerSignature(DUMMY_OWNER_MESSAGE), blockchain: 'Ethereum' }))]
+        expectInteractions(CACHE_OWNER
+          ? [...AUTH_REQUESTS, DETAIL_REQUEST, ...CATALOG_REQUESTS, ...CATALOG_REQUESTS]
+          : [...CATALOG_REQUESTS, ...AUTH_REQUESTS],
+        [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], CACHE_OWNER ? [[], []] : [[]])
+      }
+    )
+
+    test.each([METHOD])('%s preserves DFX spelling with mixed-case input', async CASE_METHOD => {
+      const { protocol } = setup({ network: 'eThErEuM' })
+      const result = await protocol[CASE_METHOD]({ cryptoAsset: 'USDt', fiatCurrency: 'eUr', fiatAmount: 10000n, config: { network: 'ETHEREUM' } })
+      const EXPECTED_ASSETS = CASE_METHOD === 'buy' ? 'asset-in=EUR&asset-out=USDT' : 'asset-in=USDT&asset-out=EUR'
+      const AMOUNT = CASE_METHOD === 'buy' ? 'amount-in' : 'amount-out'
+      expect(result).toEqual({ [`${CASE_METHOD}Url`]: `https://app.dfx.swiss/${CASE_METHOD}?session=dummy-session&lang=en&${EXPECTED_ASSETS}&blockchain=Ethereum&${AMOUNT}=100` })
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD => [
+      ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0xAbcdefABCDEFabcdefABCDEFabcdefABCDEFabcd', true],
+      ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0xabcdefabcdefabcdefabcdefabcdefabcdefabce', false],
+      ['TronAddressAbC', 'TronAddressAbC', true],
+      ['TronAddressAbC', 'tronaddressabc', false],
+      ['0xAbCd', '0xabcd', false],
+      ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', 'not-hex', false]
+    ].map(values => [CASE_METHOD, ...values])))('%s compares address case %# correctly', async (CASE_METHOD, DUMMY_ACCOUNT_ADDRESS, ADDRESS_OVERRIDE, EXPECTED_ACCEPTED) => {
+      const { protocol } = setup({ network: 'ethereum' }, {
+        [`GET /v1/auth/signMessage?address=${DUMMY_ACCOUNT_ADDRESS}`]: response({ message: 'dummy-challenge' })
+      })
+      getAddressMock.mockResolvedValue(DUMMY_ACCOUNT_ADDRESS)
+      const FIELD = CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress'
+      const pending = protocol[CASE_METHOD]({ ...OPTIONS, [FIELD]: ADDRESS_OVERRIDE })
+      if (EXPECTED_ACCEPTED) {
+        const EXPECTED_ASSETS = CASE_METHOD === 'buy' ? 'asset-in=EUR&asset-out=ETH' : 'asset-in=ETH&asset-out=EUR'
+        const AMOUNT = CASE_METHOD === 'buy' ? 'amount-in' : 'amount-out'
+        const result = await pending
+
+        expect(result).toEqual({ [`${CASE_METHOD}Url`]: `https://app.dfx.swiss/${CASE_METHOD}?session=dummy-session&lang=en&${EXPECTED_ASSETS}&blockchain=Ethereum&${AMOUNT}=100` })
+      } else {
+        await failure(pending, ValueError, `${FIELD} must match the account address`)
+      }
+      expectInteractions([...CATALOG_REQUESTS,
+        httpRequest(`/v1/auth/signMessage?address=${DUMMY_ACCOUNT_ADDRESS}`),
+        httpRequest('/v1/auth', 'POST', JSON.stringify({ address: DUMMY_ACCOUNT_ADDRESS, signature: 'dummy-signature', blockchain: 'Ethereum' }))],
+      [['dummy-challenge']], [[]])
+    })
+
+    test.each([
+      ['buy', { fiatAmount: 10000n }, 'amount-in=100', 'EUR', 'ETH'],
+      ['buy', { cryptoAmount: 50000000000000000n }, 'amount-out=0.05', 'EUR', 'ETH'],
+      ['sell', { cryptoAmount: 50000000000000000n }, 'amount-in=0.05', 'ETH', 'EUR'],
+      ['sell', { fiatAmount: 10000 }, 'amount-out=100', 'ETH', 'EUR']
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s builds the correct URL amount side for case %#', async (CASE_METHOD, AMOUNT, AMOUNT_PARAMETER, ASSET_IN, ASSET_OUT) => {
+      const { protocol } = setup({ environment: 'sandbox', network: 'ethereum', wallet: 'dummy-partner', publicKey: 'dummy-public-key', language: 'de' })
+      const result = await protocol[CASE_METHOD]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...AMOUNT })
+
+      expect(result).toEqual({
+        [`${CASE_METHOD}Url`]: `https://dev.app.dfx.swiss/${CASE_METHOD}?session=dummy-session&lang=de&asset-in=${ASSET_IN}&asset-out=${ASSET_OUT}&blockchain=Ethereum&${AMOUNT_PARAMETER}`
+      })
+      expectInteractions([
+        httpRequest('/v1/asset', 'GET', undefined, undefined, 'sandbox'),
+        httpRequest('/v1/fiat', 'GET', undefined, undefined, 'sandbox'),
+        httpRequest(`/v1/auth/signMessage?address=${DUMMY_ADDRESS}`, 'GET', undefined, undefined, 'sandbox'),
+        httpRequest('/v1/auth', 'POST', '{"address":"0x0000000000000000000000000000000000000001","signature":"dummy-signature","wallet":"dummy-partner","blockchain":"Ethereum","key":"dummy-public-key"}', undefined, 'sandbox')
+      ], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([METHOD])('%s accepts its default address explicitly and logs in freshly each time', async CASE_METHOD => {
+      let sessions = 0
+      const { protocol } = setup({ network: 'ethereum' }, { 'POST /v1/auth': () => response({ accessToken: `dummy-${++sessions}` }) })
+      const INPUT_OPTIONS = { ...OPTIONS, [CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress']: ACCOUNT_ADDRESS, config: { network: 'ethereum' } }
+      const EXPECTED_ASSETS = CASE_METHOD === 'buy' ? 'asset-in=EUR&asset-out=ETH' : 'asset-in=ETH&asset-out=EUR'
+      const AMOUNT = CASE_METHOD === 'buy' ? 'amount-in' : 'amount-out'
+      await protocol.getTransactionDetail('123')
+
+      const result = await protocol[CASE_METHOD](INPUT_OPTIONS)
+
+      expect(result).toEqual({ [`${CASE_METHOD}Url`]: `https://app.dfx.swiss/${CASE_METHOD}?session=dummy-2&lang=en&${EXPECTED_ASSETS}&blockchain=Ethereum&${AMOUNT}=100` })
+      expectInteractions([
+        CHALLENGE_REQUEST, ETH_AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-1'),
+        ...CATALOG_REQUESTS, ...ETH_WIDGET_REQUESTS
+      ], [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
+    })
+
+    test.each([METHOD])('%s validates an uncached EVM address after authentication', async CASE_METHOD => {
+      const FIELD = CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress'
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, [FIELD]: 'dummy-other-address' }), ValueError, `${FIELD} must match the account address`)
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([METHOD])('%s requires a full account', async CASE_METHOD => {
+      const { protocol } = setup({}, {}, new DummyReadOnlyAccount())
+      await failure(protocol[CASE_METHOD](OPTIONS), AccountRequiredError, 'A signing account is required for buy and sell')
+      expectInteractions([])
+    })
+
+    test.each([METHOD])('%s requires a constructor network', async CASE_METHOD => {
+      const { protocol } = setup()
+      await failure(protocol[CASE_METHOD](OPTIONS), ValueError, 'network must be configured in the constructor to bind the account to a chain')
+      expectInteractions([])
+    })
+
+    test.each([METHOD])('%s rejects a network different from the constructor', async CASE_METHOD => {
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, config: { network: 'tron' } }), ValueError, 'network must match the account network configured in the constructor')
+      expectInteractions([])
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD => ['a', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-', 'x'.repeat(256)].map(ID => [CASE_METHOD, ID])))('%s appends an encoded external ID %#', async (CASE_METHOD, ID) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      const result = await protocol[CASE_METHOD]({ ...OPTIONS, config: { externalTransactionId: ID } })
+      const EXPECTED_RESULT = widget(CASE_METHOD)
+      expect(result).toEqual({ [`${CASE_METHOD}Url`]: EXPECTED_RESULT[`${CASE_METHOD}Url`] + '&external-transaction-id=' + ID.replace(':', '%3A') })
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD => INVALID_EXTERNAL_IDS.map(ID => [CASE_METHOD, ID])))('%s rejects invalid external ID before HTTP %#', async (CASE_METHOD, ID) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, config: { externalTransactionId: ID } }), ValueError, EXTERNAL_ID_MESSAGE)
+      expectInteractions([])
+    })
+
+    test.each([METHOD])('%s omits the optional external ID', async CASE_METHOD => {
+      const { protocol } = setup({ network: 'ethereum' })
+      const result = await protocol[CASE_METHOD]({ ...OPTIONS, config: {} })
+      expect(result).toEqual(widget(CASE_METHOD))
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+  }
+
+  function quoteCases (METHOD) {
+    test.each([METHOD].flatMap(CASE_METHOD => [
+      ['Eth', ['ETH', 'eth'], ['Ethereum', 'Ethereum'], 'Ambiguous asset spelling Eth on network ethereum'],
+      ['ETH', ['ETH', 'eth'], ['Ethereum', 'Tron'], 'Ambiguous asset ETH; configure network: ethereum, tron'],
+      ['ETH', ['ETH', 'eth', 'ETH'], ['Ethereum', 'ETHEREUM', 'Tron'], 'Ambiguous asset ETH; configure network: ethereum, tron']
+    ].map(values => [CASE_METHOD, ...values])))('%s rejects unresolved asset collisions without a network %#', async (CASE_METHOD, CRYPTO_ASSET, DUMMY_NAMES, DUMMY_CHAINS, EXPECTED_MESSAGE) => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response(DUMMY_NAMES.map((DUMMY_NAME, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name: DUMMY_NAME, blockchain: DUMMY_CHAINS[index] })))
+      })
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, cryptoAsset: CRYPTO_ASSET }), ValueError, EXPECTED_MESSAGE)
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([METHOD === 'quoteBuy' ? 'buy' : 'sell'])('%s quote computes the effective CHF/USDT rate from amounts', async DIRECTION => {
+      const DUMMY_BODY = DIRECTION === 'buy'
+        ? '{"isValid":true,"amount":100,"estimatedAmount":114.32,"rate":0.87,"fees":{"total":1}}'
+        : '{"isValid":true,"amount":3,"estimatedAmount":7,"rate":0.42857,"feesTarget":{"total":1}}'
+      const { protocol } = setup({ network: 'ETHEREUM' }, { [`PUT /v1/${DIRECTION}/quote`]: response(DUMMY_BODY) })
+      const CASE_METHOD = DIRECTION === 'buy' ? 'quoteBuy' : 'quoteSell'
+      const EXPECTED_RESULT = DIRECTION === 'buy'
+        ? { cryptoAmount: 114320000n, fiatAmount: 10000n, fee: 100n, rate: '0.874737578726382085' }
+        : { cryptoAmount: 3000000n, fiatAmount: 700n, fee: 100n, rate: '2.33333333333333333' }
+      const result = await protocol[CASE_METHOD]({ cryptoAsset: 'USDt', fiatCurrency: 'chf', fiatAmount: 10000n, config: { network: 'TrOn' } })
+
+      expect(result).toEqual(EXPECTED_RESULT)
+      const PAYMENT_FIELD = DIRECTION === 'buy' ? ',"paymentMethod":"Bank"' : ''
+      const FIELD = DIRECTION === 'buy' ? 'amount' : 'targetAmount'
+      expectInteractions([...CATALOG_REQUESTS,
+        httpRequest(`/v1/${DIRECTION}/quote`, 'PUT', `{"currency":{"name":"CHF"},"asset":{"id":3},"specialCode":""${PAYMENT_FIELD},"${FIELD}":100}`)])
+    })
+
+    test.each([
+      ['quoteBuy', 'buy', { fiatAmount: 10000n }, 'amount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
+      ['quoteBuy', 'buy', { cryptoAmount: 50000000000000000n }, 'targetAmount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
+      ['quoteSell', 'sell', { cryptoAmount: 50000000000000000n }, 'amount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
+      ['quoteSell', 'sell', { fiatAmount: 10000 }, 'targetAmount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }]
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s maps amount case %# with exact request and response units', async (CASE_METHOD, DIRECTION, AMOUNT, FIELD, AMOUNT_LITERAL, EXPECTED_RESULT) => {
+      const { protocol } = setup({ wallet: 'dummy-partner' })
+      const result = await protocol[CASE_METHOD]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...AMOUNT })
+
+      expect(result).toEqual(EXPECTED_RESULT)
+      const PAYMENT_FIELD = DIRECTION === 'buy' ? ',"paymentMethod":"Bank"' : ''
+      expectInteractions([...CATALOG_REQUESTS,
+        httpRequest(`/v1/${DIRECTION}/quote`, 'PUT', `{"currency":{"name":"EUR"},"asset":{"id":1},"wallet":"dummy-partner","specialCode":""${PAYMENT_FIELD},"${FIELD}":${AMOUNT_LITERAL}}`)])
+    })
+
+    test.each([METHOD])('%s reports all ambiguous ticker networks', async CASE_METHOD => {
+      const { protocol } = setup()
+      await failure(protocol[CASE_METHOD]({ ...OPTIONS, cryptoAsset: 'USDT' }), ValueError, 'Ambiguous asset USDT; configure network: ethereum, tron')
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([
+      ['quoteBuy', 'buy', { fiatAmount: 1 }, 'limit', '10'],
+      ['quoteBuy', 'buy', { cryptoAmount: 1n }, 'limitTarget', '0.01'],
+      ['quoteSell', 'sell', { cryptoAmount: 1n }, 'limit', '0.01'],
+      ['quoteSell', 'sell', { fiatAmount: 1 }, 'limitTarget', '10']
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s rejects an invalid quote before reading its sentinel rate', async (CASE_METHOD, DIRECTION, AMOUNT, LIMIT_FIELD, DUMMY_LIMIT) => {
+      const DUMMY_BODY = `{"isValid":false,"rate":1.7976931348623157e+308,"errors":[{"error":"AmountTooLow","limit":${LIMIT_FIELD === 'limit' ? DUMMY_LIMIT : '99'},"limitTarget":${LIMIT_FIELD === 'limitTarget' ? DUMMY_LIMIT : '99'}}]}`
+      const { protocol } = setup({}, { [`PUT /v1/${DIRECTION}/quote`]: response(DUMMY_BODY) })
+      await failure(protocol[CASE_METHOD]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...AMOUNT }), ValueError, `DFX quote rejected: AmountTooLow (limit: ${DUMMY_LIMIT})`)
+      const PAYMENT_FIELD = DIRECTION === 'buy' ? ',"paymentMethod":"Bank"' : ''
+      const FIELD = LIMIT_FIELD === 'limit' ? 'amount' : 'targetAmount'
+      const AMOUNT_LITERAL = AMOUNT.fiatAmount === undefined ? '0.000000000000000001' : '0.01'
+      expectInteractions([...CATALOG_REQUESTS,
+        httpRequest(`/v1/${DIRECTION}/quote`, 'PUT', `{"currency":{"name":"EUR"},"asset":{"id":1},"specialCode":""${PAYMENT_FIELD},"${FIELD}":${AMOUNT_LITERAL}}`)])
+    })
+
+    test.each([METHOD === 'quoteBuy' ? 'buy' : 'sell'].flatMap(DIRECTION => ['amount', 'estimatedAmount'].flatMap(FIELD =>
+      [0, -1].map(DUMMY_VALUE => [DIRECTION, FIELD, DUMMY_VALUE])
+    )))('rejects nonpositive %s response %s = %s', async (DIRECTION, FIELD, DUMMY_VALUE) => {
+      const { protocol } = setup({}, { [`PUT /v1/${DIRECTION}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 100, [FIELD]: DUMMY_VALUE }) })
+      await failure(protocol[DIRECTION === 'buy' ? 'quoteBuy' : 'quoteSell'](OPTIONS), ProviderError, 'DFX quote amounts must be positive', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, DIRECTION === 'buy' ? BUY_QUOTE_REQUEST : SELL_QUOTE_REQUEST])
+    })
+
+    test.each([METHOD])('%s rejects absent fee totals', async CASE_METHOD => {
+      const DIRECTION = CASE_METHOD === 'quoteBuy' ? 'buy' : 'sell'
+      const { protocol } = setup({}, { [`PUT /v1/${DIRECTION}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 1, rate: 1 }) })
+      await failure(protocol[CASE_METHOD](OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, CASE_METHOD === 'quoteBuy' ? BUY_QUOTE_REQUEST : SELL_QUOTE_REQUEST])
+    })
+
+    test.each([METHOD].flatMap(CASE_METHOD => [400, 422].map(DUMMY_STATUS => [CASE_METHOD, DUMMY_STATUS])))('%s maps HTTP %s to invalid input', async (CASE_METHOD, DUMMY_STATUS) => {
+      const ROUTE = CASE_METHOD === 'quoteBuy' ? 'PUT /v1/buy/quote' : 'PUT /v1/sell/quote'
+      const { protocol } = setup({}, { [ROUTE]: response({ message: 'Invalid amount' }, DUMMY_STATUS) })
+      await failure(protocol[CASE_METHOD](OPTIONS), ValueError, 'Invalid amount')
+      expectInteractions([...CATALOG_REQUESTS, CASE_METHOD === 'quoteBuy' ? BUY_QUOTE_REQUEST : SELL_QUOTE_REQUEST])
+    })
+  }
+
+  function accountCases (METHOD) {
+    test.each([METHOD].flatMap(CASE_METHOD =>
+      ['0xsig', 'not-a-signature', '0x' + '00'.repeat(65), '0x' + '11'.repeat(64) + '02'].map(DUMMY_SIGNATURE => [CASE_METHOD, DUMMY_SIGNATURE])
+    ))(
+      '%s forwards unrecoverable EVM signature %# with the account address and one challenge', async (CASE_METHOD, DUMMY_SIGNATURE) => {
+        const { protocol } = ownerSetup()
+        signMock.mockResolvedValue(DUMMY_SIGNATURE)
+        const result = await protocol[CASE_METHOD](CASE_METHOD === 'getTransactionDetail'
+          ? '123'
+          : { ...OPTIONS, [CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress']: ACCOUNT_ADDRESS })
+        if (CASE_METHOD === 'getTransactionDetail') {
+          expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+        } else {
+          expect(result).toEqual(widget(CASE_METHOD))
+        }
+        const AUTH_REQUESTS = [CHALLENGE_REQUEST,
+          httpRequest('/v1/auth', 'POST', JSON.stringify({ address: DUMMY_ADDRESS, signature: DUMMY_SIGNATURE, blockchain: 'Ethereum' }))]
+        expectInteractions(CASE_METHOD === 'getTransactionDetail'
+          ? [...AUTH_REQUESTS, DETAIL_REQUEST, ...CATALOG_REQUESTS]
+          : [...CATALOG_REQUESTS, ...AUTH_REQUESTS], [[DUMMY_ACCOUNT_MESSAGE]], [[]])
+      }
+    )
+
+    test.each([METHOD].flatMap(CASE_METHOD => ['sign', 'getAddress'].map(ACCOUNT_OPERATION => [CASE_METHOD, ACCOUNT_OPERATION])))('%s wraps non-allowlisted errors from %s with their cause', async (CASE_METHOD, ACCOUNT_OPERATION) => {
+      const DUMMY_CAUSE = new NotImplementedError('dummy-operation')
+      const { protocol } = setup({ network: 'ethereum' })
+      const accountMock = ACCOUNT_OPERATION === 'sign' ? signMock : getAddressMock
+      accountMock.mockRejectedValue(DUMMY_CAUSE)
+      const error = await failure(protocol[CASE_METHOD](CASE_METHOD === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+      expect(error.cause).toBe(DUMMY_CAUSE)
+      expectInteractions([
+        ...(CASE_METHOD === 'getTransactionDetail' ? [] : CATALOG_REQUESTS),
+        ...(ACCOUNT_OPERATION === 'sign' ? [CHALLENGE_REQUEST] : [])
+      ], ACCOUNT_OPERATION === 'sign' ? [['[dev]_Sign this exact message']] : [], [[]])
+    })
+
+    test.each([
+      ['buy', new AccountRequiredError('dummy-allowed')],
+      ['buy', new ValueError('dummy-allowed')],
+      ['buy', new ProviderRequiredError('dummy-allowed')],
+      ['buy', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })],
+      ['buy', new BuyError('dummy-allowed', { reason: 'INSUFFICIENT_FUNDS' })],
+      ['buy', new MaximumFeeExceededError('dummy-allowed')],
+      ['sell', new SellError('dummy-allowed', { reason: 'INSUFFICIENT_FUNDS' })],
+      ['sell', new AccountRequiredError('dummy-allowed')],
+      ['sell', new MaximumFeeExceededError('dummy-allowed')],
+      ['sell', new ProviderRequiredError('dummy-allowed')],
+      ['sell', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })],
+      ['sell', new ValueError('dummy-allowed')],
+      ['getTransactionDetail', new ProviderRequiredError('dummy-allowed')],
+      ['getTransactionDetail', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })]
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD).flatMap(([CASE_METHOD, DUMMY_CAUSE]) => ['getAddress', 'sign'].map(ACCOUNT_OPERATION => [CASE_METHOD, DUMMY_CAUSE, ACCOUNT_OPERATION])))('%s preserves exact allowlisted error case %#', async (CASE_METHOD, DUMMY_CAUSE, ACCOUNT_OPERATION) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      const accountMock = ACCOUNT_OPERATION === 'sign' ? signMock : getAddressMock
+      accountMock.mockRejectedValue(DUMMY_CAUSE)
+      const error = await failure(protocol[CASE_METHOD](CASE_METHOD === 'getTransactionDetail' ? '123' : OPTIONS), DUMMY_CAUSE.constructor, 'dummy-allowed', DUMMY_CAUSE.reason)
+      expect(error).toBe(DUMMY_CAUSE)
+      expectInteractions([
+        ...(CASE_METHOD === 'getTransactionDetail' ? [] : CATALOG_REQUESTS),
+        ...(ACCOUNT_OPERATION === 'sign' ? [CHALLENGE_REQUEST] : [])
+      ], ACCOUNT_OPERATION === 'sign' ? [['[dev]_Sign this exact message']] : [], [[]])
+    })
+
+    test.each([
+      ['buy', new SellError('dummy-disallowed', { reason: 'INSUFFICIENT_FUNDS' })],
+      ['sell', new BuyError('dummy-disallowed', { reason: 'INSUFFICIENT_FUNDS' })],
+      ['buy', new ReadOnlyAccountRequiredError('dummy-disallowed')],
+      ['sell', new ReadOnlyAccountRequiredError('dummy-disallowed')],
+      ['getTransactionDetail', new ReadOnlyAccountRequiredError('dummy-disallowed')],
+      ['getTransactionDetail', new ValueError('dummy-disallowed')],
+      ['getTransactionDetail', new NoSuchElementError('dummy-disallowed')],
+      ['getTransactionDetail', null]
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s wraps WDK errors absent from its contract', async (CASE_METHOD, DUMMY_CAUSE) => {
+      const { protocol } = setup({ network: 'ethereum' })
+      signMock.mockRejectedValue(DUMMY_CAUSE)
+      const error = await failure(protocol[CASE_METHOD](CASE_METHOD === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+      expect(error.cause).toBe(DUMMY_CAUSE)
+      expectInteractions([...(CASE_METHOD === 'getTransactionDetail' ? [] : CATALOG_REQUESTS), CHALLENGE_REQUEST],
+        [['[dev]_Sign this exact message']], [[]])
+    })
+  }
+
+  function catalogCases (METHOD) {
+    test.each([
+      ['getSupportedCryptoAssets', 'GET /v1/asset'],
+      ['getSupportedFiatCurrencies', 'GET /v1/fiat'],
+      ['getSupportedCountries', 'GET /v1/country']
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD).flatMap(([CASE_METHOD, ROUTE]) => [400, 422].map(DUMMY_STATUS => [CASE_METHOD, ROUTE, DUMMY_STATUS])))('%s treats list validation response %# as a provider failure', async (CASE_METHOD, ROUTE, DUMMY_STATUS) => {
+      const { protocol } = setup({}, { [ROUTE]: response({ message: 'dummy-validation-error' }, DUMMY_STATUS) })
+      await failure(protocol[CASE_METHOD](), ProviderError, 'dummy-validation-error', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest(ROUTE.slice(4))])
+    })
+
+    test.each([
+      ['getSupportedCryptoAssets', 'GET /v1/asset', {}],
+      ['getSupportedFiatCurrencies', 'GET /v1/fiat', null],
+      ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], name: '' }]],
+      ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], buyable: undefined }]],
+      ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], sellable: undefined }]],
+      ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], blockchain: null }]],
+      ['getSupportedCountries', 'GET /v1/country', {}],
+      ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], bankAllowed: 'true' }]],
+      ['getSupportedCountries', 'GET /v1/country', [null]],
+      ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], symbol: false }]],
+      ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], symbol: '' }]]
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s rejects malformed metadata case %#', async (CASE_METHOD, ROUTE, DUMMY_BODY) => {
+      const { protocol } = setup({}, { [ROUTE]: response(DUMMY_BODY) })
+      await failure(protocol[CASE_METHOD](), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest(ROUTE.slice(4))])
+    })
+  }
+
+  function tradableCatalogCases (METHOD) {
+    test.each([METHOD === 'getSupportedCryptoAssets' ? 'asset' : 'fiat'].flatMap(CATALOG => [null, true, [], {}, { buyable: false, sellable: false, id: -1 }, { buyable: 'true' }].map(DUMMY_ROW => [CATALOG, DUMMY_ROW])))('ignores non-tradable %s row %# before validation', async (CATALOG, DUMMY_ROW) => {
+      const { protocol } = setup({}, { [`GET /v1/${CATALOG}`]: response([DUMMY_ROW]) })
+      const result = await protocol[CATALOG === 'asset' ? 'getSupportedCryptoAssets' : 'getSupportedFiatCurrencies']()
+
+      expect(result).toEqual([])
+      expectInteractions([httpRequest(`/v1/${CATALOG}`)])
+    })
+  }
+
+  function arrayMessageCases (METHOD) {
+    test.each([
+      ['buy', 'POST /v1/auth', 400, ['address must be a string', 'signature must be a string'], 'address must be a string; signature must be a string', ProviderError, 'INTERNAL_SERVER_ERROR'],
+      ['buy', 'POST /v1/auth', 400, ['Invalid signature'], 'Invalid signature', ProviderError, 'INTERNAL_SERVER_ERROR'],
+      ['buy', 'POST /v1/auth', 401, ['Unauthorized', 'Session expired'], 'Unauthorized; Session expired', ProviderError, 'UNAUTHORIZED'],
+      ['getSupportedCountries', 'GET /v1/country', 503, ['Unavailable', 'Try later'], 'Unavailable; Try later', ProviderError, 'INTERNAL_SERVER_ERROR'],
+      ['getSupportedCryptoAssets', 'GET /v1/asset', 400, ['Invalid filter', 'Try later'], 'Invalid filter; Try later', ProviderError, 'INTERNAL_SERVER_ERROR'],
+      ['getSupportedFiatCurrencies', 'GET /v1/fiat', 422, ['Invalid filter', 'Try later'], 'Invalid filter; Try later', ProviderError, 'INTERNAL_SERVER_ERROR'],
+      ['quoteBuy', 'PUT /v1/buy/quote', 400, ['amount must be positive', 'asset must be valid'], 'amount must be positive; asset must be valid', ValueError, undefined],
+      ['quoteSell', 'PUT /v1/sell/quote', 422, ['amount must be positive', 'asset must be valid'], 'amount must be positive; asset must be valid', ValueError, undefined],
+      ['getTransactionDetail', 'GET /v1/transaction/detail/single?uid=123', 404, ['Transaction not found', 'Try later'], 'Transaction not found; Try later', NoSuchElementError, undefined],
+      ['getTransactionDetail', `GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`, 400, ['Invalid signature', 'Challenge unavailable'], 'Invalid signature; Challenge unavailable', ProviderError, 'INTERNAL_SERVER_ERROR']
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s preserves string-array errors from %s (%s)', async (CASE_METHOD, ROUTE, DUMMY_STATUS, DUMMY_MESSAGES, EXPECTED_MESSAGE, ErrorClass, EXPECTED_REASON) => {
+      const { protocol } = setup({ network: 'ethereum' }, { [ROUTE]: response({ message: DUMMY_MESSAGES }, DUMMY_STATUS) })
+      await failure(protocol[CASE_METHOD](CASE_METHOD === 'getTransactionDetail' ? '123' : OPTIONS), ErrorClass, EXPECTED_MESSAGE, EXPECTED_REASON)
+      const EXPECTED_REQUESTS = {
+        buy: ETH_WIDGET_REQUESTS,
+        quoteBuy: [...CATALOG_REQUESTS, BUY_QUOTE_REQUEST],
+        quoteSell: [...CATALOG_REQUESTS, SELL_QUOTE_REQUEST],
+        getSupportedCountries: [httpRequest('/v1/country')],
+        getSupportedCryptoAssets: [httpRequest('/v1/asset')],
+        getSupportedFiatCurrencies: [httpRequest('/v1/fiat')],
+        getTransactionDetail: ROUTE === 'GET /v1/transaction/detail/single?uid=123'
+          ? [CHALLENGE_REQUEST, ETH_AUTH_REQUEST, DETAIL_REQUEST] : [CHALLENGE_REQUEST]
+      }
+      expectInteractions(EXPECTED_REQUESTS[CASE_METHOD],
+        CASE_METHOD === 'buy' || ROUTE === 'GET /v1/transaction/detail/single?uid=123' ? [['[dev]_Sign this exact message']] : [],
+        CASE_METHOD === 'buy' || CASE_METHOD === 'getTransactionDetail' ? [[]] : [])
+    })
+  }
+
+  describe('exports', () => {
+    test('exports the class by name and default and the WDK interface', () => {
+      expect(NamedDfxProtocol).toBe(DfxProtocol)
+      expect(IFiatProtocol).toBe(WalletFiatProtocol)
+      for (const [EXPORT_NAME, EXPECTED_VALUE] of Object.entries({ AccountRequiredError, ValueError, ProviderError, ProviderRequiredError, BuyError, SellError, MaximumFeeExceededError, NoSuchElementError, ProviderErrorReason })) {
+        expect(publicApi[EXPORT_NAME]).toBe(EXPECTED_VALUE)
+      }
+      expectInteractions([])
+    })
   })
 
-  test('returns undefined for a null asset description', async () => {
-    const { protocol } = setup({}, { 'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], description: null }]) })
-    expect(await protocol.getSupportedCryptoAssets()).toEqual([
-      { code: 'ETH', networkCode: 'ethereum', decimals: 18, name: undefined }
-    ])
+  describe('constructor', () => {
+    test.each([0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', async TIMEOUT => {
+      await failure(Promise.resolve().then(() => new DfxProtocol(undefined, { timeout: TIMEOUT })), ValueError, 'timeout must be a finite number greater than zero')
+      expectInteractions([])
+    })
+
+    test.each([2147483648, Number.MAX_VALUE])('rejects timer overflow %s', async TIMEOUT => {
+      await failure(Promise.resolve().then(() => new DfxProtocol(undefined, { timeout: TIMEOUT })), ValueError, 'timeout must not exceed 2147483647 milliseconds')
+      expectInteractions([])
+    })
+
+    test.each(['network', 'wallet', 'publicKey', 'language'].flatMap(FIELD =>
+      ['', '  '].map(VALUE => [FIELD, VALUE])
+    ))('rejects invalid constructor string %s case %#', async (FIELD, VALUE) => {
+      await failure(Promise.resolve().then(() => new DfxProtocol(undefined, { [FIELD]: VALUE })), ValueError, `${FIELD} must be a non-empty string`)
+      expectInteractions([])
+    })
   })
 
-  test.each([0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', timeout => {
-    expect(() => new DfxProtocol(undefined, { timeout })).toThrow(new ValueError('timeout must be a finite number greater than zero'))
+  describe('buy', () => {
+    tradeCases('buy')
+    widgetCases('buy')
+    accountCases('buy')
+    arrayMessageCases('buy')
+
+    test('authenticates the ethers UTF-8 reference owner through the public API', async () => {
+      // Independent ethers Wallet.signMessage vector, public private-key scalar 2.
+      const DUMMY_ETHERS_SIGNATURE = '0x97ef3091c721f0afe35f3211adf256f2ce0231a7f7efebee90bce4ce43ffe0c84ca2dba2bb88d3e89b561d9b4c9d79a929e2d896cdbc65f5e1556dbd9ef20ae21c'
+      const DUMMY_ETHERS_MESSAGE = 'By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address. Grüße ✓ 0xabc'
+      const EXPECTED_ETHERS_ADDRESS = '0x2b5ad5c4795c026514f8317c7a215e218dccd6cf'
+      const { protocol } = setup({ network: 'ethereum' }, {
+        [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: DUMMY_ETHERS_MESSAGE }),
+        [`GET /v1/auth/signMessage?address=${EXPECTED_ETHERS_ADDRESS}`]: response({ message: DUMMY_ETHERS_MESSAGE })
+      })
+      signMock.mockResolvedValue(DUMMY_ETHERS_SIGNATURE)
+      const result = await protocol.buy(OPTIONS)
+
+      expect(result).toEqual(widget('buy'))
+      expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+        httpRequest(`/v1/auth/signMessage?address=${EXPECTED_ETHERS_ADDRESS}`),
+        httpRequest('/v1/auth', 'POST', JSON.stringify({ address: EXPECTED_ETHERS_ADDRESS, signature: DUMMY_ETHERS_SIGNATURE, blockchain: 'Ethereum' }))],
+      [[DUMMY_ETHERS_MESSAGE], [DUMMY_ETHERS_MESSAGE]], [[]])
+    })
+
+    test.each(['unauthorized', 'missing token', 'owner challenge failure'])(
+      'repeats owner recovery after %s', async MODE => {
+        const { protocol, routes } = ownerSetup()
+        let logins = 0
+        let challenges = 0
+        routes['POST /v1/auth'] = () => {
+          if (++logins === 1 && MODE === 'unauthorized') return response({ message: 'Invalid signature' }, 401)
+          if (logins === 1 && MODE === 'missing token') return response({})
+          return response({ accessToken: 'dummy-retry-session' })
+        }
+        routes[`GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`] = () =>
+          ++challenges === 1 && MODE === 'owner challenge failure'
+            ? response({ message: 'Challenge unavailable' }, 401)
+            : response({ message: DUMMY_OWNER_MESSAGE })
+        const EXPECTED_MESSAGE = MODE === 'unauthorized' ? 'Invalid signature' : MODE === 'missing token' ? 'Unexpected DFX response' : 'Challenge unavailable'
+        const EXPECTED_REASON = MODE === 'missing token' ? ProviderErrorReason.INTERNAL_SERVER_ERROR : ProviderErrorReason.UNAUTHORIZED
+        const initialError = await protocol.sell(OPTIONS).catch(error => error)
+
+        const result = await protocol.buy(OPTIONS)
+
+        expect(initialError.constructor).toBe(ProviderError)
+        expect(initialError.message).toBe(EXPECTED_MESSAGE)
+        expect(initialError.reason).toBe(EXPECTED_REASON)
+        expect(result).toEqual(widget('buy', { token: 'dummy-retry-session' }))
+        expectInteractions([
+          ...CATALOG_REQUESTS,
+          ...(MODE === 'owner challenge failure' ? OWNER_AUTH_REQUESTS.slice(0, 2) : OWNER_AUTH_REQUESTS),
+          ...CATALOG_REQUESTS, ...OWNER_AUTH_REQUESTS
+        ], MODE === 'owner challenge failure'
+          ? [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]]
+          : [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE], [DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[], []])
+      }
+    )
+
+    test('does not cache an unrelated signer recovered from a signature over a foreign digest', async () => {
+      // ECDSA fixture: nonce k=1 gives r=G.x and recovery bit 0. For key d=2,
+      // signing z'=z-r gives s=z'+2r=z+r. Recovery against challenge digest z
+      // therefore yields key 1, although the signature was made for another
+      // digest with key 2. Both keys are public test scalars.
+      const PAYLOAD = Buffer.from(DUMMY_ACCOUNT_MESSAGE, 'utf8')
+      const DIGEST = keccak_256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${PAYLOAD.length}`), PAYLOAD]))
+      const ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+      const R = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n
+      const FOREIGN_DIGEST = (BigInt('0x' + Buffer.from(DIGEST).toString('hex')) - R + ORDER) % ORDER
+      const S = (FOREIGN_DIGEST + 2n * R) % ORDER
+      const DUMMY_SIGNATURE = '0x' + R.toString(16).padStart(64, '0') + S.toString(16).padStart(64, '0') + '1b'
+      const EXPECTED_ADDRESS = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
+      const { protocol } = setup({ network: 'ethereum' }, {
+        [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: DUMMY_ACCOUNT_MESSAGE }),
+        [`GET /v1/auth/signMessage?address=${EXPECTED_ADDRESS}`]: response({ message: DUMMY_OWNER_MESSAGE }),
+        'POST /v1/auth': response({ message: 'Invalid signature' }, 401)
+      })
+      signMock.mockResolvedValue(DUMMY_SIGNATURE)
+      const initialError = await protocol.sell(OPTIONS).catch(error => error)
+
+      await failure(protocol.buy(OPTIONS), ProviderError, 'Invalid signature', ProviderErrorReason.UNAUTHORIZED)
+
+      expect(initialError.constructor).toBe(ProviderError)
+      expect(initialError.message).toBe('Invalid signature')
+      const EXPECTED_REQUESTS = [...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+        httpRequest(`/v1/auth/signMessage?address=${EXPECTED_ADDRESS}`),
+        httpRequest('/v1/auth', 'POST', JSON.stringify({ address: EXPECTED_ADDRESS, signature: DUMMY_SIGNATURE, blockchain: 'Ethereum' }))]
+      expectInteractions([...EXPECTED_REQUESTS, ...EXPECTED_REQUESTS],
+        [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE], [DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[], []])
+    })
+
+    test.each([OWNER_ADDRESS, '0x' + OWNER_ADDRESS.slice(2).toUpperCase()])('EOA %s needs one challenge and one signature per login', async DUMMY_ACCOUNT_ADDRESS => {
+      const { protocol } = ownerSetup('Ethereum', DUMMY_ACCOUNT_ADDRESS)
+      await protocol.sell(OPTIONS)
+
+      const result = await protocol.buy({ ...OPTIONS, recipient: OWNER_ADDRESS })
+
+      expect(result).toEqual(widget('buy'))
+      const EXPECTED_REQUESTS = [...CATALOG_REQUESTS,
+        httpRequest(`/v1/auth/signMessage?address=${DUMMY_ACCOUNT_ADDRESS}`),
+        httpRequest('/v1/auth', 'POST', JSON.stringify({ address: DUMMY_ACCOUNT_ADDRESS, signature: ownerSignature(DUMMY_ACCOUNT_MESSAGE), blockchain: 'Ethereum' }))
+      ]
+      expectInteractions([...EXPECTED_REQUESTS, ...EXPECTED_REQUESTS], [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_ACCOUNT_MESSAGE]], [[], []])
+    })
+
+    test.each(['Tron', 'Bitcoin', 'Solana', 'FutureEvm'])('%s leaves a recoverable EVM signature on the account address', async NETWORK => {
+      const { protocol } = ownerSetup(NETWORK)
+      const result = await protocol.buy({ ...OPTIONS, recipient: ACCOUNT_ADDRESS })
+
+      expect(result).toEqual(widget('buy', { blockchain: NETWORK }))
+      expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+        httpRequest('/v1/auth', 'POST', JSON.stringify({ address: DUMMY_ADDRESS, signature: ownerSignature(DUMMY_ACCOUNT_MESSAGE), blockchain: NETWORK === 'FutureEvm' ? undefined : NETWORK }))],
+      [[DUMMY_ACCOUNT_MESSAGE]], [[]])
+    })
+
+    test('a changed account address does not borrow the previous owner cache', async () => {
+      const { protocol, routes } = ownerSetup()
+      const DUMMY_NEXT_ADDRESS = '0x0000000000000000000000000000000000000002'
+      routes[`GET /v1/auth/signMessage?address=${DUMMY_NEXT_ADDRESS}`] = response({ message: 'Next account' })
+      getAddressMock.mockResolvedValueOnce(DUMMY_ADDRESS).mockResolvedValue(DUMMY_NEXT_ADDRESS)
+      await protocol.sell(OPTIONS)
+
+      const result = await protocol.buy(OPTIONS)
+
+      expect(result).toEqual(widget('buy'))
+      expectInteractions([...CATALOG_REQUESTS, ...OWNER_AUTH_REQUESTS, ...CATALOG_REQUESTS,
+        httpRequest(`/v1/auth/signMessage?address=${DUMMY_NEXT_ADDRESS}`), ...OWNER_AUTH_REQUESTS.slice(1)],
+      [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE], ['Next account'], [DUMMY_OWNER_MESSAGE]], [[], []])
+    })
+
+    test('a fresh instance does not borrow another instance owner cache', async () => {
+      const { protocol, account, fetch } = ownerSetup()
+      const fresh = new DfxProtocol(account, { network: 'ethereum', fetch })
+      await protocol.sell(OPTIONS)
+
+      const result = await fresh.buy(OPTIONS)
+
+      expect(result).toEqual(widget('buy'))
+      expectInteractions([...CATALOG_REQUESTS, ...OWNER_AUTH_REQUESTS, ...CATALOG_REQUESTS, ...OWNER_AUTH_REQUESTS],
+        [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE], [DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[], []])
+    })
+
+    test('an unrecoverable signature does not prevent owner resolution on a later login', async () => {
+      const { protocol } = ownerSetup()
+      signMock.mockResolvedValueOnce('invalid-signature')
+      await protocol.sell(OPTIONS)
+
+      const result = await protocol.buy(OPTIONS)
+
+      expect(result).toEqual(widget('buy'))
+      expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST,
+        httpRequest('/v1/auth', 'POST', '{"address":"0x0000000000000000000000000000000000000001","signature":"invalid-signature","blockchain":"Ethereum"}'),
+        ...CATALOG_REQUESTS, ...OWNER_AUTH_REQUESTS],
+      [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[], []])
+    })
+
+    test('encodes a future blockchain value in widget URLs', async () => {
+      const { protocol } = setup({ network: 'new-chain2/?&' }, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: 'New-Chain2/?&' }])
+      })
+      const result = await protocol.buy(OPTIONS)
+
+      expect(result).toEqual({
+        buyUrl: 'https://app.dfx.swiss/buy?session=dummy-session&lang=en&asset-in=EUR&asset-out=ETH&blockchain=New-Chain2%2F%3F%26&amount-in=100'
+      })
+      expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST, AUTH_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('rejects a resolved asset outside the bound account network', async () => {
+      const { protocol } = setup({ network: 'tron' })
+      await failure(protocol.buy(OPTIONS), ValueError, 'Unsupported buy asset or network: ETH')
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each([
+      [400, 'Invalid signature', 'UNAUTHORIZED'],
+      [401, 'Invalid signature format', 'UNAUTHORIZED'],
+      [400, 'Invalid signature format', 'INTERNAL_SERVER_ERROR'],
+      [400, 'Invalid signature ', 'INTERNAL_SERVER_ERROR'],
+      [400, 'invalid signature', 'INTERNAL_SERVER_ERROR'],
+      [400, 'Public key is required', 'INTERNAL_SERVER_ERROR'],
+      [422, 'Invalid signature', 'INTERNAL_SERVER_ERROR']
+    ])('auth HTTP %s preserves rejection %s with reason %s', async (DUMMY_STATUS, EXPECTED_MESSAGE, EXPECTED_REASON) => {
+      const { protocol } = setup({ network: 'ethereum' }, { 'POST /v1/auth': response({ message: EXPECTED_MESSAGE }, DUMMY_STATUS) })
+      await failure(protocol.buy(OPTIONS), ProviderError, EXPECTED_MESSAGE, EXPECTED_REASON)
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('preserves the geo-filter message from authentication', async () => {
+      const { protocol } = setup({ network: 'ethereum' }, { 'POST /v1/auth': response({ message: 'The country of IP address is not allowed' }, 403) })
+      await failure(protocol.buy(OPTIONS), ProviderError, 'The country of IP address is not allowed', 'FORBIDDEN')
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('encodes widget session and language values without adding query parameters', async () => {
+      const { protocol } = setup({ network: 'ethereum', language: 'de&extra=1' }, {
+        'POST /v1/auth': response({ accessToken: 'dummy+/=&token' })
+      })
+      const result = await protocol.buy(OPTIONS)
+
+      expect(result).toEqual({
+        buyUrl: 'https://app.dfx.swiss/buy?session=dummy%2B%2F%3D%26token&lang=de%26extra%3D1&asset-in=EUR&asset-out=ETH&blockchain=Ethereum&amount-in=100'
+      })
+      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
   })
 
-  test.each([2147483648, Number.MAX_VALUE])('rejects timer overflow %s', timeout => {
-    expect(() => new DfxProtocol(undefined, { timeout })).toThrow(new ValueError('timeout must not exceed 2147483647 milliseconds'))
+  describe('sell', () => {
+    tradeCases('sell')
+    widgetCases('sell')
+    accountCases('sell')
   })
 
-  test('accepts the maximum timer delay without clamping it', async () => {
-    jest.useFakeTimers()
-    const timer = jest.spyOn(globalThis, 'setTimeout')
-    const { protocol } = setup({ timeout: 2147483647 })
-    expect(await protocol.getSupportedCountries()).toEqual([
-      { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
-      { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
-    ])
-    expect(timer).toHaveBeenCalledWith(expect.any(Function), 2147483647)
+  describe('quoteBuy', () => {
+    tradeCases('quoteBuy')
+    quoteCases('quoteBuy')
+    arrayMessageCases('quoteBuy')
+
+    test.each([undefined, 0, -1, 'not-a-rate'])('does not use the provider rate field %#', async DUMMY_RATE => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount: 3, estimatedAmount: 2, rate: DUMMY_RATE, fees: { total: 0 } }) })
+      const result = await protocol.quoteBuy(OPTIONS)
+
+      expect(result).toEqual({ cryptoAmount: 2000000000000000000n, fiatAmount: 300n, fee: 0n, rate: '1.5' })
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test('rounds an exact halfway quotient up at the eighteenth significant digit', async () => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response('{"isValid":true,"amount":123456789012345678.50,"estimatedAmount":1,"fees":{"total":0}}') })
+      const result = await protocol.quoteBuy(OPTIONS)
+
+      expect(result).toEqual({ cryptoAmount: 1000000000000000000n, fiatAmount: 12345678901234567850n, fee: 0n, rate: '123456789012345679' })
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test('per-quote network overrides the constructor without changing the account binding', async () => {
+      const { protocol } = setup({ network: 'ethereum' }, { 'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 100, rate: 1, fees: { total: 1 } }) })
+      const result = await protocol.quoteBuy({ ...OPTIONS, cryptoAsset: 'USDT', config: { network: 'tron' } })
+
+      expect(result).toEqual({ cryptoAmount: 100000000n, fiatAmount: 10000n, fee: 100n, rate: '1' })
+      expectInteractions([...CATALOG_REQUESTS,
+        httpRequest('/v1/buy/quote', 'PUT', '{"currency":{"name":"EUR"},"asset":{"id":3},"specialCode":"","paymentMethod":"Bank","amount":100}')])
+    })
+
+    test.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, 0n, -1n])('rejects invalid amount %s', async AMOUNT => {
+      const { protocol } = setup()
+      await failure(protocol.quoteBuy({ ...OPTIONS, fiatAmount: AMOUNT }), ValueError, 'amount must be a positive safe integer or positive bigint')
+      expectInteractions([])
+    })
+
+    test('rejects an amount exceeding finite API number precision', async () => {
+      const { protocol } = setup()
+      await failure(protocol.quoteBuy({ ...OPTIONS, fiatAmount: 10n ** 400n }), ValueError, 'amount exceeds the precision the DFX API accepts')
+      expectInteractions(CATALOG_REQUESTS)
+    })
+
+    test.each(['AmountTooHigh', 'PaymentMethodNotAllowed', 'IbanCurrencyMismatch', 'AssetUnsupported', 'CurrencyUnsupported'])('maps input quote error %s', async DUMMY_CODE => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: false, error: DUMMY_CODE }) })
+      await failure(protocol.quoteBuy(OPTIONS), ValueError, `DFX quote rejected: ${DUMMY_CODE}`)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each(['KycRequired', 'BankTransactionMissing', 'PrimaryEmailNotConfirmed', 'LimitExceeded', 'NewAccountState'])('maps account state %s to the provider fallback', async DUMMY_CODE => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: false, errors: [{ error: DUMMY_CODE }] }) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, `DFX quote rejected: ${DUMMY_CODE}`, ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each([{ isValid: false }, { isValid: false, errors: [] }])('rejects invalid quotes without error codes', async DUMMY_BODY => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid DFX quote without an error code', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test('rejects a quote without explicit validity', async () => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({}) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Missing quote validity', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each([null, [], true].map(DUMMY_BODY => [DUMMY_BODY]))('rejects a non-object quote response %#', async DUMMY_BODY => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each([
+      ['estimatedAmount', '0.0000000000000000001'], ['amount', '1.001'], ['fees', { total: '-1' }]
+    ])('rejects fractional or negative smallest units in %s', async (FIELD, DUMMY_VALUE) => {
+      const DUMMY_BODY = { isValid: true, amount: '100', estimatedAmount: '0.05', rate: '2000', fees: { total: '1' }, [FIELD]: DUMMY_VALUE }
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'DFX amount is not a non-negative integer in smallest units', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each([undefined, 'NaN', '01', true])('rejects malformed quote decimals %s', async DUMMY_AMOUNT => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount: DUMMY_AMOUNT, estimatedAmount: 1 }) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test('preserves a parsed numeric HTTP 422 message as a provider failure', async () => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ message: 1 }, 422) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, '1', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each([
+      ['JPY', 13, 100n, '100'],
+      ['BHD', 14, 1234n, '1.234'],
+      ['CLF', 17, 12345n, '1.2345']
+    ])('uses ISO minor units for %s in quote requests and responses', async (FIAT_CURRENCY, DUMMY_ID, AMOUNT, AMOUNT_LITERAL) => {
+      const { protocol } = setup({}, {
+        'GET /v1/fiat': response([{ id: DUMMY_ID, name: FIAT_CURRENCY, buyable: true, sellable: true }]),
+        'PUT /v1/buy/quote': response(`{"isValid":true,"amount":${AMOUNT_LITERAL},"estimatedAmount":1,"rate":${AMOUNT_LITERAL},"fees":{"total":0}}`)
+      })
+      const result = await protocol.quoteBuy({ cryptoAsset: 'ETH', fiatCurrency: FIAT_CURRENCY, fiatAmount: AMOUNT })
+
+      expect(result).toEqual({
+        cryptoAmount: 1000000000000000000n, fiatAmount: AMOUNT, fee: 0n, rate: AMOUNT_LITERAL
+      })
+      expectInteractions([...CATALOG_REQUESTS,
+        httpRequest('/v1/buy/quote', 'PUT', `{"currency":{"name":"${FIAT_CURRENCY}"},"asset":{"id":1},"specialCode":"","paymentMethod":"Bank","amount":${AMOUNT_LITERAL}}`)])
+    })
+
+    test.each([
+      [{ error: 'AmountTooLow', message: 'Quote input rejected' }, 'Quote input rejected'],
+      [{ errors: [{ error: 'AmountTooHigh' }], message: 'Quote input rejected' }, 'Quote input rejected'],
+      [{ error: 'Bad Request', message: 'amount must be positive' }, 'amount must be positive'],
+      [{ error: 'Unprocessable Entity', message: ['targetAmount must be positive'] }, 'targetAmount must be positive']
+    ])('attributes HTTP validation failures to input using codes or explicit fields', async (DUMMY_BODY, EXPECTED_MESSAGE) => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY, 400) })
+      await failure(protocol.quoteBuy(OPTIONS), ValueError, EXPECTED_MESSAGE)
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
+
+    test.each([
+      [{ error: 'KycRequired', message: 'KYC must be completed' }, 'KYC must be completed'],
+      [{ error: 'BankTransactionMissing', message: 'Bank setup incomplete' }, 'Bank setup incomplete'],
+      [{ message: 'Unclassified failure' }, 'Unclassified failure'],
+      [{ message: [{ a: 1 }] }, 'DFX HTTP 422'],
+      [{}, 'DFX HTTP 422'],
+      [null, 'DFX HTTP 422']
+    ])('does not attribute an unknown HTTP 422 failure to caller input', async (DUMMY_BODY, EXPECTED_MESSAGE) => {
+      const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY, 422) })
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, EXPECTED_MESSAGE, 'INTERNAL_SERVER_ERROR')
+      expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
+    })
   })
 
-  test.each(['network', 'wallet', 'publicKey', 'language'].flatMap(field =>
-    ['', '  '].map(value => [field, value])
-  ))('rejects invalid constructor string %s case %#', (field, value) => {
-    expect(() => new DfxProtocol(undefined, { [field]: value })).toThrow(new ValueError(`${field} must be a non-empty string`))
+  describe('quoteSell', () => {
+    tradeCases('quoteSell')
+    quoteCases('quoteSell')
+    arrayMessageCases('quoteSell')
+
+    test.each([
+      ['3', '0.333333333333333333', 3n * 10n ** 40n], ['6', '0.166666666666666667', 6n * 10n ** 40n],
+      ['1e-20', '100000000000000000000', 10n ** 20n],
+      ['1e20', '0.00000000000000000001', 10n ** 60n], ['1.25e-30', '800000000000000000000000000000', 12500000000n],
+      ['0.000000000000000003', '333333333333333333', 3n * 10n ** 22n], ['1', '1', 10n ** 40n], ['0.5', '2', 5n * 10n ** 39n],
+      ['0.9999999999999999999', '1', 9999999999999999999n * 10n ** 21n]
+    ])('divides response amounts with denominator %s to 18 significant places', async (DUMMY_AMOUNT, EXPECTED_RESULT, EXPECTED_CRYPTO_AMOUNT) => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], decimals: 40 }]),
+        'PUT /v1/sell/quote': response(`{"isValid":true,"amount":${DUMMY_AMOUNT},"estimatedAmount":1,"rate":7,"feesTarget":{"total":0}}`)
+      })
+      const result = await protocol.quoteSell(OPTIONS)
+
+      expect(result).toEqual({ cryptoAmount: EXPECTED_CRYPTO_AMOUNT, fiatAmount: 100n, fee: 0n, rate: EXPECTED_RESULT })
+      expectInteractions([...CATALOG_REQUESTS, SELL_QUOTE_REQUEST])
+    })
   })
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    ['', '  '].map(network => [method, network])
-  ))('%s rejects invalid per-operation networks %#', async (method, network) => {
-    const { protocol, fetch } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ ...OPTIONS, config: { network } }), ValueError, 'network must be a non-empty string')
-    expect(fetch.mock.calls).toEqual([])
-  })
+  describe('getSupportedCryptoAssets', () => {
+    catalogCases('getSupportedCryptoAssets')
+    tradableCatalogCases('getSupportedCryptoAssets')
+    arrayMessageCases('getSupportedCryptoAssets')
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    ['ETH', 'eth'].map(name => [method, name])
-  ))('%s prefers the unique exact asset spelling %s on one network', async (method, name) => {
-    const { protocol, fetch } = setup({ network: 'ethereum' }, {
-      'GET /v1/asset': response([
-        { ...DUMMY_ASSETS[0], id: 8, name: 'eth' }, DUMMY_ASSETS[0]
+    test.each(NATIVE_ASSETS.flatMap(([DUMMY_BLOCKCHAIN, DUMMY_NAME]) => [null, undefined, 0, 6].map(DUMMY_DECIMALS =>
+      [DUMMY_BLOCKCHAIN, DUMMY_NAME, DUMMY_DECIMALS]
+    )))('lists %s/%s with API decimals %s taking precedence', async (DUMMY_BLOCKCHAIN, DUMMY_NAME, DUMMY_DECIMALS) => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain: DUMMY_BLOCKCHAIN, name: DUMMY_NAME, decimals: DUMMY_DECIMALS }])
+      })
+      const result = await protocol.getSupportedCryptoAssets()
+
+      expect(result).toEqual([
+        { code: DUMMY_NAME, networkCode: DUMMY_BLOCKCHAIN.toLowerCase(), decimals: DUMMY_DECIMALS ?? 8, name: 'Bitcoin' }
       ])
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    const result = await protocol[method]({ ...OPTIONS, cryptoAsset: name, config: {} })
-    if (method.startsWith('quote')) {
-      const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
-      expect(body.asset).toEqual({ id: name === 'ETH' ? 1 : 8 })
-    } else {
-      const url = new URL(result[`${method}Url`])
-      expect(url.searchParams.get(method === 'buy' ? 'asset-out' : 'asset-in')).toBe(name)
-    }
-  })
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method => [
-    ['Eth', ['ETH', 'eth']],
-    ['ETH', ['ETH', 'ETH']]
-  ].map(values => [method, ...values])))('%s rejects unresolved asset spelling on one network %#', async (method, name, names) => {
-    const { protocol } = setup({ network: 'ethereum' }, {
-      'GET /v1/asset': response(names.map((name, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name, blockchain: index === 0 ? 'Ethereum' : 'ETHEREUM' })))
+    test.each([['Bitcoin', 'UNKNOWN'], ['Unknown', 'BTC'], ['Unknown', 'FIRO']])('excludes unknown %s/%s without decimals', async (DUMMY_BLOCKCHAIN, DUMMY_NAME) => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain: DUMMY_BLOCKCHAIN, name: DUMMY_NAME }])
+      })
+      const result = await protocol.getSupportedCryptoAssets()
+
+      expect(result).toEqual([])
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: name }), ValueError,
-      `Ambiguous asset spelling ${name} on network ethereum`)
-  })
 
-  test.each(['quoteBuy', 'quoteSell'].flatMap(method => [
-    ['Eth', ['ETH', 'eth'], ['Ethereum', 'Ethereum'], 'Ambiguous asset spelling Eth on network ethereum'],
-    ['ETH', ['ETH', 'eth'], ['Ethereum', 'Tron'], 'Ambiguous asset ETH; configure network: ethereum, tron'],
-    ['ETH', ['ETH', 'eth', 'ETH'], ['Ethereum', 'ETHEREUM', 'Tron'], 'Ambiguous asset ETH; configure network: ethereum, tron']
-  ].map(values => [method, ...values])))('%s rejects unresolved asset collisions without a network %#', async (method, name, names, chains, message) => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response(names.map((name, index) => ({ ...DUMMY_ASSETS[0], id: index + 1, name, blockchain: chains[index] })))
+    test.each([-1, 1.5, 256, 'invalid'])('does not hide invalid native API decimals %s', async DUMMY_DECIMALS => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], decimals: DUMMY_DECIMALS }])
+      })
+      await failure(protocol.getSupportedCryptoAssets(), ProviderError, DUMMY_DECIMALS === 'invalid' ? 'Invalid decimal in DFX response' : 'Invalid asset decimals', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: name }), ValueError, message)
-  })
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    ['EUR', 'eur'].map(name => [method, name])
-  ))('%s matches input %s to the uppercase fiat catalog entry and excludes lowercase rows', async (method, name) => {
-    const { protocol, fetch } = setup({ network: 'ethereum' }, {
-      'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], id: 18, name: 'eur' }, DUMMY_FIAT[0]])
-    })
-    const result = await protocol[method]({ ...OPTIONS, fiatCurrency: name })
-    if (method.startsWith('quote')) {
-      const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'PUT')[1].body)
-      expect(body.currency).toEqual({ name: 'EUR' })
-      expect(result.fiatAmount).toBe(10000n)
-    } else {
-      const url = new URL(result[`${method}Url`])
-      expect(url.searchParams.get(method === 'buy' ? 'asset-in' : 'asset-out')).toBe('EUR')
-      expect(url.searchParams.get(method === 'buy' ? 'amount-in' : 'amount-out')).toBe('100')
-    }
-  })
+    test('returns undefined for a null asset description', async () => {
+      const { protocol } = setup({}, { 'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], description: null }]) })
+      const result = await protocol.getSupportedCryptoAssets()
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method => [
-    ['Eur', ['EUR', 'EUR']], ['EUR', ['EUR', 'EUR']]
-  ].map(values => [method, ...values])))('%s rejects unresolved fiat collisions %#', async (method, name, names) => {
-    const { protocol } = setup({ network: 'ethereum' }, {
-      'GET /v1/fiat': response(names.map((name, index) => ({ ...DUMMY_FIAT[0], id: index + 11, name })))
-    })
-    await failure(protocol[method]({ ...OPTIONS, fiatCurrency: name }), ValueError, `Ambiguous fiat currency: ${name}`)
-  })
-
-  test('excludes fiat catalog names without an exact uppercase ISO table entry', async () => {
-    const { protocol } = setup({}, {
-      'GET /v1/fiat': response([
-        { ...DUMMY_FIAT[0], id: 18, name: 'eur' },
-        { ...DUMMY_FIAT[0], id: 19, name: 'Eur' },
-        DUMMY_FIAT[0]
+      expect(result).toEqual([
+        { code: 'ETH', networkCode: 'ethereum', decimals: 18, name: undefined }
       ])
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    expect(await protocol.getSupportedFiatCurrencies()).toEqual([{ code: 'EUR', decimals: 2 }])
-  })
 
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    ['eur', 'EUR'].map(name => [method, name])
-  ))('%s rejects input %s when only a lowercase fiat catalog row exists', async (method, name) => {
-    const { protocol, fetch } = setup({ network: 'ethereum' }, {
-      'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], name: 'eur' }])
+    test.each(['NewChain2', 'New-Chain2/?&'])('lists a future blockchain value %s', async DUMMY_BLOCKCHAIN => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: DUMMY_BLOCKCHAIN }])
+      })
+      const result = await protocol.getSupportedCryptoAssets()
+
+      expect(result).toEqual([
+        { code: 'ETH', networkCode: DUMMY_BLOCKCHAIN.toLowerCase(), decimals: 18, name: 'Ether' }
+      ])
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    await failure(protocol[method]({ ...OPTIONS, fiatCurrency: name }), ValueError,
-      `Unsupported ${method.toLowerCase().includes('buy') ? 'buy' : 'sell'} fiat currency: ${name}`)
-    expect(fetch.mock.calls.map(([, init]) => init.method)).toEqual(['GET', 'GET'])
-  })
 
-  test.each(['NewChain2', 'New-Chain2/?&'])('lists a future blockchain value %s', async blockchain => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain }])
+    test.each(['', 'New Chain', 'Chain\t2', 'Chain\n2', 'Chain\u00002', 'Chain\u007f2', 'Chain\u00852', 'Chain\u200b2', 'Chain\u202e2'])('rejects empty blockchain names or whitespace, control and format characters %#', async DUMMY_BLOCKCHAIN => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: DUMMY_BLOCKCHAIN }])
+      })
+      await failure(protocol.getSupportedCryptoAssets(), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    expect(await protocol.getSupportedCryptoAssets()).toEqual([
-      { code: 'ETH', networkCode: blockchain.toLowerCase(), decimals: 18, name: 'Ether' }
-    ])
-  })
 
-  test('encodes a future blockchain value in widget URLs', async () => {
-    const { protocol } = setup({ network: 'new-chain2/?&' }, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain: 'New-Chain2/?&' }])
+    test('lists assets available in either direction including native decimal fallbacks', async () => {
+      const { protocol } = setup()
+      const result = await protocol.getSupportedCryptoAssets()
+
+      expect(result).toEqual([
+        { code: 'ETH', networkCode: 'ethereum', decimals: 18, name: 'Ether' },
+        { code: 'USDT', networkCode: 'ethereum', decimals: 6, name: 'Tether' },
+        { code: 'USDT', networkCode: 'tron', decimals: 6, name: 'Tether' },
+        { code: 'BTC', networkCode: 'bitcoin', decimals: 8, name: 'Bitcoin' },
+        { code: 'BUY', networkCode: 'ethereum', decimals: 2, name: 'Buy only' },
+        { code: 'SELL', networkCode: 'ethereum', decimals: 2, name: 'Sell only' }
+      ])
+      expectInteractions([httpRequest('/v1/asset')])
     })
-    expect(await protocol.buy(OPTIONS)).toEqual({
-      buyUrl: 'https://app.dfx.swiss/buy?session=dummy-session&lang=en&asset-in=EUR&asset-out=ETH&blockchain=New-Chain2%2F%3F%26&amount-in=100'
+
+    test('excludes null decimals but keeps zero decimals and optional asset names', async () => {
+      const { protocol } = setup({}, { 'GET /v1/asset': response([
+        { ...DUMMY_ASSETS[0], decimals: null }, { ...DUMMY_ASSETS[4], decimals: 0, description: undefined }
+      ]) })
+      const result = await protocol.getSupportedCryptoAssets()
+
+      expect(result).toEqual([{ code: 'BUY', networkCode: 'ethereum', decimals: 0, name: undefined }])
+      expectInteractions([httpRequest('/v1/asset')])
     })
   })
 
-  test.each(['', 'New Chain', 'Chain\t2', 'Chain\n2', 'Chain\u00002', 'Chain\u007f2', 'Chain\u00852', 'Chain\u200b2', 'Chain\u202e2'])('rejects empty blockchain names or whitespace, control and format characters %#', async blockchain => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain }])
+  describe('getSupportedFiatCurrencies', () => {
+    catalogCases('getSupportedFiatCurrencies')
+    tradableCatalogCases('getSupportedFiatCurrencies')
+    arrayMessageCases('getSupportedFiatCurrencies')
+
+    test('excludes fiat catalog names without an exact uppercase ISO table entry', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/fiat': response([
+          { ...DUMMY_FIAT[0], id: 18, name: 'eur' },
+          { ...DUMMY_FIAT[0], id: 19, name: 'Eur' },
+          DUMMY_FIAT[0]
+        ])
+      })
+      const result = await protocol.getSupportedFiatCurrencies()
+
+      expect(result).toEqual([{ code: 'EUR', decimals: 2 }])
+      expectInteractions([httpRequest('/v1/fiat')])
     })
-    await failure(protocol.getSupportedCryptoAssets(), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-  })
 
-  test.each(['buy', 'sell'])('%s preserves DFX spelling with mixed-case input', async method => {
-    const { protocol, fetch } = setup({ network: 'eThErEuM' })
-    const result = await protocol[method]({ cryptoAsset: 'USDt', fiatCurrency: 'eUr', fiatAmount: 10000n, config: { network: 'ETHEREUM' } })
-    const assets = method === 'buy' ? 'asset-in=EUR&asset-out=USDT' : 'asset-in=USDT&asset-out=EUR'
-    const amount = method === 'buy' ? 'amount-in' : 'amount-out'
-    expect(result).toEqual({ [`${method}Url`]: `https://app.dfx.swiss/${method}?session=dummy-session&lang=en&${assets}&blockchain=Ethereum&${amount}=100` })
-    request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature","blockchain":"Ethereum"}`)
-  })
+    test('lists fiat in either direction with ISO minor units and excludes unknown currencies', async () => {
+      const { protocol } = setup()
+      const result = await protocol.getSupportedFiatCurrencies()
 
-  test.each(['buy', 'sell'])('%s quote computes the effective CHF/USDT rate from amounts', async direction => {
-    const body = direction === 'buy'
-      ? '{"isValid":true,"amount":100,"estimatedAmount":114.32,"rate":0.87,"fees":{"total":1}}'
-      : '{"isValid":true,"amount":3,"estimatedAmount":7,"rate":0.42857,"feesTarget":{"total":1}}'
-    const { protocol, fetch } = setup({ network: 'ETHEREUM' }, { [`PUT /v1/${direction}/quote`]: response(body) })
-    const method = direction === 'buy' ? 'quoteBuy' : 'quoteSell'
-    const expected = direction === 'buy'
-      ? { cryptoAmount: 114320000n, fiatAmount: 10000n, fee: 100n, rate: '0.874737578726382085' }
-      : { cryptoAmount: 3000000n, fiatAmount: 700n, fee: 100n, rate: '2.33333333333333333' }
-    expect(await protocol[method]({ cryptoAsset: 'USDt', fiatCurrency: 'chf', fiatAmount: 10000n, config: { network: 'TrOn' } })).toEqual(expected)
-    const payment = direction === 'buy' ? ',"paymentMethod":"Bank"' : ''
-    const field = direction === 'buy' ? 'amount' : 'targetAmount'
-    request(fetch, `/v1/${direction}/quote`, 'PUT', `{"currency":{"name":"CHF"},"asset":{"id":3},"specialCode":""${payment},"${field}":100}`)
-  })
-
-  test.each([undefined, 0, -1, 'not-a-rate'])('does not use the provider rate field %#', async rate => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount: 3, estimatedAmount: 2, rate, fees: { total: 0 } }) })
-    expect(await protocol.quoteBuy(OPTIONS)).toEqual({ cryptoAmount: 2000000000000000000n, fiatAmount: 300n, fee: 0n, rate: '1.5' })
-  })
-
-  test('rounds an exact halfway quotient up at the eighteenth significant digit', async () => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response('{"isValid":true,"amount":123456789012345678.50,"estimatedAmount":1,"fees":{"total":0}}') })
-    expect((await protocol.quoteBuy(OPTIONS)).rate).toBe('123456789012345679')
-  })
-
-  test.each(['buy', 'sell'].flatMap(method => [
-    ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0xAbcdefABCDEFabcdefABCDEFabcdefABCDEFabcd', true],
-    ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', '0xabcdefabcdefabcdefabcdefabcdefabcdefabce', false],
-    ['TronAddressAbC', 'TronAddressAbC', true],
-    ['TronAddressAbC', 'tronaddressabc', false],
-    ['0xAbCd', '0xabcd', false],
-    ['0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', 'not-hex', false]
-  ].map(values => [method, ...values])))('%s compares address case %# correctly', async (method, address, override, accepted) => {
-    const { protocol, account } = setup({ network: 'ethereum' }, {
-      [`GET /v1/auth/signMessage?address=${address}`]: response({ message: 'dummy-challenge' })
+      expect(result).toEqual([
+        { code: 'EUR', decimals: 2 }, { code: 'CHF', decimals: 2 }, { code: 'JPY', decimals: 0 }, { code: 'BHD', decimals: 3 }
+      ])
+      expectInteractions([httpRequest('/v1/fiat')])
     })
-    account.getAddress.mockResolvedValue(address)
-    const field = method === 'buy' ? 'recipient' : 'refundAddress'
-    const pending = protocol[method]({ ...OPTIONS, [field]: override })
-    if (accepted) {
-      const assets = method === 'buy' ? 'asset-in=EUR&asset-out=ETH' : 'asset-in=ETH&asset-out=EUR'
-      const amount = method === 'buy' ? 'amount-in' : 'amount-out'
-      expect(await pending).toEqual({ [`${method}Url`]: `https://app.dfx.swiss/${method}?session=dummy-session&lang=en&${assets}&blockchain=Ethereum&${amount}=100` })
-      expect(account.sign).toHaveBeenCalledWith('dummy-challenge')
-    } else {
-      await failure(pending, ValueError, `${field} must match the account address`)
-      expect(account.sign.mock.calls).toEqual([['dummy-challenge']])
-    }
-  })
 
-  test.each(['injected', 'ambient'])('binds %s fetch to the global object', async mode => {
-    const implementation = function () {
-      if (this !== globalThis && this !== undefined) throw new ValueError('Illegal fetch receiver')
-      return Promise.resolve(response([]))
-    }
-    const fetch = mode === 'ambient' ? jest.spyOn(globalThis, 'fetch').mockImplementation(implementation) : jest.fn(implementation)
-    const protocol = new DfxProtocol(undefined, mode === 'ambient' ? {} : { fetch })
-    expect(await protocol.getSupportedCountries()).toEqual([])
-    expect(fetch.mock.contexts).toEqual([globalThis])
-    request(fetch, '/v1/country', 'GET')
-  })
-
-  test.each(['asset', 'fiat'].flatMap(kind => [null, true, [], {}, { buyable: false, sellable: false, id: -1 }, { buyable: 'true' }].map(row => [kind, row])))('ignores non-tradable %s row %# before validation', async (kind, row) => {
-    const { protocol } = setup({}, { [`GET /v1/${kind}`]: response([row]) })
-    expect(await protocol[kind === 'asset' ? 'getSupportedCryptoAssets' : 'getSupportedFiatCurrencies']()).toEqual([])
-  })
-
-  test.each(['asset', 'fiat'])('resolves a historical inactive %s row among malformed unrelated rows', async kind => {
-    const rows = kind === 'asset' ? DUMMY_ASSETS : DUMMY_FIAT
-    const { protocol } = setup({}, {
-      [`GET /v1/${kind}`]: response([null, {}, { buyable: true, id: 'unrelated' }, { ...rows[0], buyable: false, sellable: false }])
+    test.each([0, -1, 1.5, '9007199254740992'])('rejects invalid provider identifiers %s', async DUMMY_ID => {
+      const { protocol } = setup({}, { 'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], id: DUMMY_ID }]) })
+      await failure(protocol.getSupportedFiatCurrencies(), ProviderError, 'Invalid DFX identifier', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/fiat')])
     })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
   })
 
-  test.each([true, false])('validates the historical matched row with ID lookup = %s', async byId => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], buyable: undefined }]),
-      'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, outputAssetId: byId ? 1 : undefined })
+  describe('getSupportedCountries', () => {
+    catalogCases('getSupportedCountries')
+    arrayMessageCases('getSupportedCountries')
+
+    test('accepts the maximum timer delay without clamping it', async () => {
+      jest.useFakeTimers()
+      const SET_TIMEOUT = globalThis.setTimeout
+      timerMock.mockImplementation((...args) => SET_TIMEOUT(...args))
+      jest.spyOn(globalThis, 'setTimeout').mockImplementation(timerMock)
+      const { protocol } = setup({ timeout: 2147483647 })
+      const result = await protocol.getSupportedCountries()
+
+      expect(result).toEqual([
+        { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
+        { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
+      ])
+      expect(timerMock).toHaveBeenCalledWith(expect.any(Function), 2147483647)
+      expectInteractions([httpRequest('/v1/country')])
     })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-  })
 
-  test('resolves a historical fallback past null and unrelated catalog rows', async () => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([null, {}, { ...DUMMY_ASSETS[0], buyable: false, sellable: false }]),
-      'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, outputAssetId: undefined })
+    test.each(['injected', 'ambient'])('binds %s fetch to the global object', async MODE => {
+      const implementation = function () {
+        if (this !== globalThis && this !== undefined) throw new ValueError('Illegal fetch receiver')
+        return Promise.resolve(response([]))
+      }
+      const fetch = transportMock.mockImplementation(implementation)
+      const protocol = new DfxProtocol(undefined, MODE === 'ambient' ? {} : { fetch })
+      const result = await protocol.getSupportedCountries()
+
+      expect(result).toEqual([])
+      expect(fetch.mock.contexts).toEqual([globalThis])
+      expectRequests(fetch.mock.calls, [httpRequest('/v1/country')])
+      expectInteractions([])
     })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-  })
 
-  test('lists assets available in either direction including native decimal fallbacks', async () => {
-    const { protocol, fetch } = setup()
-    expect(await protocol.getSupportedCryptoAssets()).toEqual([
-      { code: 'ETH', networkCode: 'ethereum', decimals: 18, name: 'Ether' },
-      { code: 'USDT', networkCode: 'ethereum', decimals: 6, name: 'Tether' },
-      { code: 'USDT', networkCode: 'tron', decimals: 6, name: 'Tether' },
-      { code: 'BTC', networkCode: 'bitcoin', decimals: 8, name: 'Bitcoin' },
-      { code: 'BUY', networkCode: 'ethereum', decimals: 2, name: 'Buy only' },
-      { code: 'SELL', networkCode: 'ethereum', decimals: 2, name: 'Sell only' }
-    ])
-    request(fetch, '/v1/asset', 'GET')
-  })
+    test('maps bank availability independently from card and location flags', async () => {
+      const { protocol } = setup()
+      const result = await protocol.getSupportedCountries()
 
-  test('lists fiat in either direction with ISO minor units and excludes unknown currencies', async () => {
-    const { protocol, fetch } = setup()
-    expect(await protocol.getSupportedFiatCurrencies()).toEqual([
-      { code: 'EUR', decimals: 2 }, { code: 'CHF', decimals: 2 }, { code: 'JPY', decimals: 0 }, { code: 'BHD', decimals: 3 }
-    ])
-    request(fetch, '/v1/fiat', 'GET')
-  })
-
-  test('maps bank availability independently from card and location flags', async () => {
-    const { protocol, fetch } = setup()
-    expect(await protocol.getSupportedCountries()).toEqual([
-      { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
-      { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
-    ])
-    request(fetch, '/v1/country', 'GET')
-  })
-
-  test.each([
-    ['quoteBuy', 'buy', { fiatAmount: 10000n }, 'amount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
-    ['quoteBuy', 'buy', { cryptoAmount: 50000000000000000n }, 'targetAmount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
-    ['quoteSell', 'sell', { cryptoAmount: 50000000000000000n }, 'amount', '0.05', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }],
-    ['quoteSell', 'sell', { fiatAmount: 10000 }, 'targetAmount', '100', { cryptoAmount: 123456789012345678n, fiatAmount: 10000n, fee: 123n, rate: '810.000007290000072' }]
-  ])('%s maps amount case %# with exact request and response units', async (method, direction, amount, field, literal, expected) => {
-    const { protocol, fetch, account } = setup({ wallet: 'dummy-partner' })
-    expect(await protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amount })).toEqual(expected)
-    const payment = direction === 'buy' ? ',"paymentMethod":"Bank"' : ''
-    request(fetch, `/v1/${direction}/quote`, 'PUT', `{"currency":{"name":"EUR"},"asset":{"id":1},"wallet":"dummy-partner","specialCode":""${payment},"${field}":${literal}}`)
-    request(fetch, '/v1/asset', 'GET')
-    request(fetch, '/v1/fiat', 'GET')
-    expect(account.sign.mock.calls).toEqual([])
-    expect(fetch.mock.calls.length).toBe(3)
-  })
-
-  test.each([
-    ['buy', { fiatAmount: 10000n }, 'amount-in=100', 'EUR', 'ETH'],
-    ['buy', { cryptoAmount: 50000000000000000n }, 'amount-out=0.05', 'EUR', 'ETH'],
-    ['sell', { cryptoAmount: 50000000000000000n }, 'amount-in=0.05', 'ETH', 'EUR'],
-    ['sell', { fiatAmount: 10000 }, 'amount-out=100', 'ETH', 'EUR']
-  ])('%s builds the correct URL amount side for case %#', async (method, amount, parameter, assetIn, assetOut) => {
-    const { protocol, fetch, account } = setup({ environment: 'sandbox', network: 'ethereum', wallet: 'dummy-partner', publicKey: 'dummy-public-key', language: 'de' })
-    expect(await protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amount })).toEqual({
-      [`${method}Url`]: `https://dev.app.dfx.swiss/${method}?session=dummy-session&lang=de&asset-in=${assetIn}&asset-out=${assetOut}&blockchain=Ethereum&${parameter}`
+      expect(result).toEqual([
+        { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
+        { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
+      ])
+      expectInteractions([httpRequest('/v1/country')])
     })
-    expect(account.getAddress).toHaveBeenCalledWith()
-    expect(account.sign).toHaveBeenCalledWith('[dev]_Sign this exact message')
-    request(fetch, `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`, 'GET', undefined, undefined, 'sandbox')
-    request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature","wallet":"dummy-partner","blockchain":"Ethereum","key":"dummy-public-key"}`, undefined, 'sandbox')
-    expect(fetch.mock.calls.length).toBe(4)
-  })
 
-  test.each(['buy', 'sell'])('%s accepts its default address explicitly and logs in freshly each time', async method => {
-    let sessions = 0
-    const { protocol, account, fetch } = setup({ network: 'ethereum' }, { 'POST /v1/auth': () => response({ accessToken: `dummy-${++sessions}` }) })
-    const options = { ...OPTIONS, [method === 'buy' ? 'recipient' : 'refundAddress']: DUMMY_ADDRESS, config: { network: 'ethereum' } }
-    const assets = method === 'buy' ? 'asset-in=EUR&asset-out=ETH' : 'asset-in=ETH&asset-out=EUR'
-    const amount = method === 'buy' ? 'amount-in' : 'amount-out'
-    expect(await protocol[method](options)).toEqual({ [`${method}Url`]: `https://app.dfx.swiss/${method}?session=dummy-1&lang=en&${assets}&blockchain=Ethereum&${amount}=100` })
-    expect(await protocol[method](options)).toEqual({ [`${method}Url`]: `https://app.dfx.swiss/${method}?session=dummy-2&lang=en&${assets}&blockchain=Ethereum&${amount}=100` })
-    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']])
-    request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature","blockchain":"Ethereum"}`)
-  })
-
-  test.each(['buy', 'sell'])('%s validates an uncached EVM address after authentication', async method => {
-    const field = method === 'buy' ? 'recipient' : 'refundAddress'
-    const { protocol, account, fetch } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ ...OPTIONS, [field]: 'dummy-other-address' }), ValueError, `${field} must match the account address`)
-    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message']])
-    expect(authCalls(fetch).map(([url, init]) => [init.method, new URL(url).pathname + new URL(url).search])).toEqual([
-      ['GET', `/v1/auth/signMessage?address=${DUMMY_ADDRESS}`], ['POST', '/v1/auth']
-    ])
-  })
-
-  test.each(['buy', 'sell'])('%s requires a full account', async method => {
-    const { protocol, fetch } = setup({}, {}, { getAddress: jest.fn() })
-    await failure(protocol[method](OPTIONS), AccountRequiredError, 'A signing account is required for buy and sell')
-    expect(fetch.mock.calls).toEqual([])
-  })
-
-  test.each(['buy', 'sell'])('%s requires a constructor network', async method => {
-    const { protocol, fetch } = setup()
-    await failure(protocol[method](OPTIONS), ValueError, 'network must be configured in the constructor to bind the account to a chain')
-    expect(fetch.mock.calls).toEqual([])
-  })
-
-  test.each(['buy', 'sell'])('%s rejects a network different from the constructor', async method => {
-    const { protocol } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ ...OPTIONS, config: { network: 'tron' } }), ValueError, 'network must match the account network configured in the constructor')
-  })
-
-  test.each(['quoteBuy', 'quoteSell'])('%s reports all ambiguous ticker networks', async method => {
-    const { protocol } = setup()
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: 'USDT' }), ValueError, 'Ambiguous asset USDT; configure network: ethereum, tron')
-  })
-
-  test('per-quote network overrides the constructor without changing the account binding', async () => {
-    const { protocol, fetch } = setup({ network: 'ethereum' }, { 'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 100, rate: 1, fees: { total: 1 } }) })
-    expect(await protocol.quoteBuy({ ...OPTIONS, cryptoAsset: 'USDT', config: { network: 'tron' } })).toEqual({ cryptoAmount: 100000000n, fiatAmount: 10000n, fee: 100n, rate: '1' })
-    request(fetch, '/v1/buy/quote', 'PUT', '{"currency":{"name":"EUR"},"asset":{"id":3},"specialCode":"","paymentMethod":"Bank","amount":100}')
-  })
-
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    [{}, { fiatAmount: 1n, cryptoAmount: 1n }].map(amounts => [method, amounts])
-  ))('%s rejects invalid amount selection %#', async (method, amounts) => {
-    const { protocol } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amounts }), ValueError, 'Exactly one of fiatAmount and cryptoAmount must be supplied')
-  })
-
-  test.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, 0n, -1n])('rejects invalid amount %s', async amount => {
-    const { protocol, fetch } = setup()
-    await failure(protocol.quoteBuy({ ...OPTIONS, fiatAmount: amount }), ValueError, 'amount must be a positive safe integer or positive bigint')
-    expect(fetch.mock.calls).toEqual([])
-  })
-
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'])('%s rejects input precision loss', async method => {
-    const { protocol } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', cryptoAmount: 123456789012345678n }), ValueError, 'amount exceeds the precision the DFX API accepts')
-  })
-
-  test('rejects an amount exceeding finite API number precision', async () => {
-    const { protocol } = setup()
-    await failure(protocol.quoteBuy({ ...OPTIONS, fiatAmount: 10n ** 400n }), ValueError, 'amount exceeds the precision the DFX API accepts')
-  })
-
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'])('%s rejects assets with missing decimals', async method => {
-    const { protocol } = setup({ network: 'bitcoin' }, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], name: 'UNKNOWN' }])
+    test.each([
+      [401, 'UNAUTHORIZED'], [403, 'FORBIDDEN'], [408, 'REQUEST_TIMEOUT'],
+      [429, 'INTERNAL_SERVER_ERROR'], [500, 'INTERNAL_SERVER_ERROR'],
+      [503, 'INTERNAL_SERVER_ERROR'], [404, 'INTERNAL_SERVER_ERROR'], [418, 'INTERNAL_SERVER_ERROR']
+    ])('maps HTTP %s with its message', async (DUMMY_STATUS, EXPECTED_REASON) => {
+      const { protocol } = setup({}, { 'GET /v1/country': response({ message: 'dummy-provider-message' }, DUMMY_STATUS) })
+      await failure(protocol.getSupportedCountries(), ProviderError, 'dummy-provider-message', EXPECTED_REASON)
+      expectInteractions([httpRequest('/v1/country')])
     })
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset: 'UNKNOWN' }), ValueError, 'Missing decimals for Bitcoin/UNKNOWN')
-  })
 
-  test.each([
-    ['buy', 'SELL', 'EUR', 'Unsupported buy asset or network: SELL'],
-    ['quoteBuy', 'SELL', 'EUR', 'Unsupported buy asset or network: SELL'],
-    ['sell', 'BUY', 'EUR', 'Unsupported sell asset or network: BUY'],
-    ['quoteSell', 'BUY', 'EUR', 'Unsupported sell asset or network: BUY'],
-    ['buy', 'ETH', 'BHD', 'Unsupported buy fiat currency: BHD'],
-    ['quoteBuy', 'ETH', 'BHD', 'Unsupported buy fiat currency: BHD'],
-    ['sell', 'ETH', 'JPY', 'Unsupported sell fiat currency: JPY'],
-    ['quoteSell', 'ETH', 'JPY', 'Unsupported sell fiat currency: JPY'],
-    ['quoteBuy', 'ETH', 'ZZZ', 'Unsupported buy fiat currency: ZZZ'],
-    ['quoteBuy', 'ETH', 'XXX', 'Unsupported buy fiat currency: XXX'],
-    ['quoteBuy', 'UNKNOWN', 'EUR', 'Unsupported buy asset or network: UNKNOWN']
-  ])('%s enforces direction and supported metadata', async (method, cryptoAsset, fiatCurrency, message) => {
-    const { protocol } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ ...OPTIONS, cryptoAsset, fiatCurrency }), ValueError, message)
-  })
-
-  test('rejects a resolved asset outside the bound account network', async () => {
-    const { protocol } = setup({ network: 'tron' })
-    await failure(protocol.buy(OPTIONS), ValueError, 'Unsupported buy asset or network: ETH')
-  })
-
-  test.each([
-    ['quoteBuy', 'buy', { fiatAmount: 1 }, 'limit', '10'],
-    ['quoteBuy', 'buy', { cryptoAmount: 1n }, 'limitTarget', '0.01'],
-    ['quoteSell', 'sell', { cryptoAmount: 1n }, 'limit', '0.01'],
-    ['quoteSell', 'sell', { fiatAmount: 1 }, 'limitTarget', '10']
-  ])('%s rejects an invalid quote before reading its sentinel rate', async (method, direction, amount, limitField, limit) => {
-    const body = `{"isValid":false,"rate":1.7976931348623157e+308,"errors":[{"error":"AmountTooLow","limit":${limitField === 'limit' ? limit : '99'},"limitTarget":${limitField === 'limitTarget' ? limit : '99'}}]}`
-    const { protocol } = setup({}, { [`PUT /v1/${direction}/quote`]: response(body) })
-    await failure(protocol[method]({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', ...amount }), ValueError, `DFX quote rejected: AmountTooLow (limit: ${limit})`)
-  })
-
-  test.each(['AmountTooHigh', 'PaymentMethodNotAllowed', 'IbanCurrencyMismatch', 'AssetUnsupported', 'CurrencyUnsupported'])('maps input quote error %s', async code => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: false, error: code }) })
-    await failure(protocol.quoteBuy(OPTIONS), ValueError, `DFX quote rejected: ${code}`)
-  })
-
-  test.each(['KycRequired', 'BankTransactionMissing', 'PrimaryEmailNotConfirmed', 'LimitExceeded', 'NewAccountState'])('maps account state %s to the provider fallback', async code => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: false, errors: [{ error: code }] }) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, `DFX quote rejected: ${code}`, ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
-
-  test.each([{ isValid: false }, { isValid: false, errors: [] }])('rejects invalid quotes without error codes', async body => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid DFX quote without an error code', ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
-
-  test('rejects a quote without explicit validity', async () => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({}) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Missing quote validity', ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
-
-  test.each([null, [], true].map(body => [body]))('rejects a non-object quote response %#', async body => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test.each([
-    ['3', '0.333333333333333333'], ['6', '0.166666666666666667'], ['1e-20', '100000000000000000000'],
-    ['1e20', '0.00000000000000000001'], ['1.25e-30', '800000000000000000000000000000'],
-    ['0.000000000000000003', '333333333333333333'], ['1', '1'], ['0.5', '2'],
-    ['0.9999999999999999999', '1']
-  ])('divides response amounts with denominator %s to 18 significant places', async (amount, expected) => {
-    const { protocol } = setup({}, {
-      'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], decimals: 40 }]),
-      'PUT /v1/sell/quote': response(`{"isValid":true,"amount":${amount},"estimatedAmount":1,"rate":7,"feesTarget":{"total":0}}`)
+    test.each([[{ a: 1 }], [['Invalid input']], [], { detail: 'Invalid input' }, null, '', ['Invalid input', '']].map(DUMMY_MESSAGE => [DUMMY_MESSAGE]))('uses HTTP 400 fallback for an empty or non-string message after parsing %#', async DUMMY_MESSAGE => {
+      const { protocol } = setup({}, { 'GET /v1/country': response({ message: DUMMY_MESSAGE }, 400) })
+      await failure(protocol.getSupportedCountries(), ProviderError, 'DFX HTTP 400', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/country')])
     })
-    expect((await protocol.quoteSell(OPTIONS)).rate).toBe(expected)
+
+    test('joins a string and a parsed numeric message with a semicolon', async () => {
+      const { protocol } = setup({}, { 'GET /v1/country': response({ message: ['Invalid input', 1] }, 400) })
+      await failure(protocol.getSupportedCountries(), ProviderError, 'Invalid input; 1', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/country')])
+    })
+
+    test.each(['<html>Unavailable</html>', '{}', 'null'])('uses an HTTP fallback message for body %s', async DUMMY_BODY => {
+      const { protocol } = setup({}, { 'GET /v1/country': response(DUMMY_BODY, 503) })
+      await failure(protocol.getSupportedCountries(), ProviderError, 'DFX HTTP 503', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/country')])
+    })
+
+    test('preserves a network error as the cause', async () => {
+      const DUMMY_CAUSE = new TypeError('dummy-network-failure')
+      const fetch = transportMock.mockRejectedValue(DUMMY_CAUSE)
+      const protocol = new DfxProtocol(undefined, { fetch })
+      const error = await failure(protocol.getSupportedCountries(), ProviderError, 'DFX network request failed', 'NETWORK_ERROR')
+      expect(error.cause).toBe(DUMMY_CAUSE)
+      expectRequests(fetch.mock.calls, [httpRequest('/v1/country')])
+      expectInteractions([])
+    })
+
+    test('maps response body transport failures to NETWORK_ERROR', async () => {
+      const DUMMY_CAUSE = new TypeError('dummy-body-failure')
+      const DUMMY_BODY = { ok: true, status: 200, text: bodyTextMock.mockRejectedValue(DUMMY_CAUSE) }
+      const { protocol } = setup({}, { 'GET /v1/country': DUMMY_BODY })
+      const error = await failure(protocol.getSupportedCountries(), ProviderError, 'DFX network request failed', 'NETWORK_ERROR')
+      expect(error.cause).toBe(DUMMY_CAUSE)
+      expect(DUMMY_BODY.text).toHaveBeenCalledWith()
+      expectInteractions([httpRequest('/v1/country')])
+    })
+
+    test.each([undefined, 10])('aborts requests at the configured deadline %s', async TIMEOUT => {
+      jest.useFakeTimers()
+      const fetch = transportMock.mockImplementation((url, init) => new Promise((resolve, reject) => {
+        const signal = init.signal
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      }))
+      const protocol = new DfxProtocol(undefined, { fetch, timeout: TIMEOUT })
+      const pending = failure(protocol.getSupportedCountries(), ProviderError, 'DFX request timed out', 'REQUEST_TIMEOUT')
+      await jest.advanceTimersByTimeAsync(TIMEOUT ?? 30000)
+      await pending
+      expect(jest.getTimerCount()).toBe(0)
+      expectRequests(fetch.mock.calls, [httpRequest('/v1/country')], true)
+      expectInteractions([])
+    })
+
+    test.each(['{', '{"value":01}', '{"value":1e}', '{"value":NaN}', '{12:3}'])('rejects malformed JSON %s', async DUMMY_BODY => {
+      const { protocol } = setup({}, { 'GET /v1/country': response(DUMMY_BODY) })
+      await failure(protocol.getSupportedCountries(), ProviderError, 'Invalid JSON in DFX response', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([httpRequest('/v1/country')])
+    })
+
+    test('preserves quoted digits, escaped quotes and backslashes in JSON strings', async () => {
+      const DUMMY_COUNTRIES = [{ symbol: 'CH', name: 'Area 12 "North" \\ 3', bankAllowed: true }]
+      const { protocol } = setup({}, { 'GET /v1/country': response(DUMMY_COUNTRIES) })
+      const result = await protocol.getSupportedCountries()
+
+      expect(result).toEqual([{ code: 'CH', name: 'Area 12 "North" \\ 3', isBuyAllowed: true, isSellAllowed: true }])
+      expectInteractions([httpRequest('/v1/country')])
+    })
   })
 
-  test.each(['buy', 'sell'].flatMap(direction => ['amount', 'estimatedAmount'].flatMap(field =>
-    [0, -1].map(value => [direction, field, value])
-  )))('rejects nonpositive %s response %s = %s', async (direction, field, value) => {
-    const { protocol } = setup({}, { [`PUT /v1/${direction}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 100, [field]: value }) })
-    await failure(protocol[direction === 'buy' ? 'quoteBuy' : 'quoteSell'](OPTIONS), ProviderError, 'DFX quote amounts must be positive', ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
+  describe('getTransactionDetail', () => {
+    accountCases('getTransactionDetail')
+    arrayMessageCases('getTransactionDetail')
 
-  test.each([
-    ['estimatedAmount', '0.0000000000000000001'], ['amount', '1.001'], ['fees', { total: '-1' }]
-  ])('rejects fractional or negative smallest units in %s', async (field, value) => {
-    const body = { isValid: true, amount: '100', estimatedAmount: '0.05', rate: '2000', fees: { total: '1' }, [field]: value }
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'DFX amount is not a non-negative integer in smallest units', ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
+    test('transaction-detail renewal authenticates the cached owner', async () => {
+      const { protocol, routes } = ownerSetup()
+      let attempts = 0
+      routes['GET /v1/transaction/detail/single?uid=123'] = () => ++attempts === 1 ? response({}, 401) : response(DUMMY_DETAIL)
+      const result = await protocol.getTransactionDetail('123')
 
-  test.each([undefined, 'NaN', '01', true])('rejects malformed quote decimals %s', async amount => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount, estimatedAmount: 1 }) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions([...OWNER_AUTH_REQUESTS, DETAIL_REQUEST,
+        ...OWNER_AUTH_REQUESTS.slice(1), DETAIL_REQUEST, ...CATALOG_REQUESTS],
+      [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[], []])
+    })
 
-  test.each(['quoteBuy', 'quoteSell'])('%s rejects absent fee totals', async method => {
-    const direction = method === 'quoteBuy' ? 'buy' : 'sell'
-    const { protocol } = setup({}, { [`PUT /v1/${direction}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 1, rate: 1 }) })
-    await failure(protocol[method](OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
-  })
+    test.each(['asset', 'fiat'])('resolves a historical inactive %s row among malformed unrelated rows', async CATALOG => {
+      const DUMMY_ROWS = CATALOG === 'asset' ? DUMMY_ASSETS : DUMMY_FIAT
+      const { protocol } = setup({}, {
+        [`GET /v1/${CATALOG}`]: response([null, {}, { buyable: true, id: 'unrelated' }, { ...DUMMY_ROWS[0], buyable: false, sellable: false }])
+      })
+      const result = await protocol.getTransactionDetail('123')
 
-  test.each([
-    [401, 'UNAUTHORIZED'], [403, 'FORBIDDEN'], [408, 'REQUEST_TIMEOUT'],
-    [429, 'INTERNAL_SERVER_ERROR'], [500, 'INTERNAL_SERVER_ERROR'],
-    [503, 'INTERNAL_SERVER_ERROR'], [404, 'INTERNAL_SERVER_ERROR'], [418, 'INTERNAL_SERVER_ERROR']
-  ])('maps HTTP %s with its message', async (status, reason) => {
-    const { protocol, fetch } = setup({}, { 'GET /v1/country': response({ message: 'dummy-provider-message' }, status) })
-    await failure(protocol.getSupportedCountries(), ProviderError, 'dummy-provider-message', reason)
-    request(fetch, '/v1/country', 'GET')
-  })
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
 
-  test.each([
-    ['getSupportedCryptoAssets', 'GET /v1/asset'],
-    ['getSupportedFiatCurrencies', 'GET /v1/fiat'],
-    ['getSupportedCountries', 'GET /v1/country']
-  ].flatMap(([method, route]) => [400, 422].map(status => [method, route, status])))('%s treats list validation response %# as a provider failure', async (method, route, status) => {
-    const { protocol } = setup({}, { [route]: response({ message: 'dummy-validation-error' }, status) })
-    await failure(protocol[method](), ProviderError, 'dummy-validation-error', 'INTERNAL_SERVER_ERROR')
-  })
+    test.each([true, false])('validates the historical matched row with ID lookup = %s', async USE_ID => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], buyable: undefined }]),
+        'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, outputAssetId: USE_ID ? 1 : undefined })
+      })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
 
-  test.each(['quoteBuy', 'quoteSell'].flatMap(method => [400, 422].map(status => [method, status])))('%s maps HTTP %s to invalid input', async (method, status) => {
-    const route = method === 'quoteBuy' ? 'PUT /v1/buy/quote' : 'PUT /v1/sell/quote'
-    const { protocol } = setup({}, { [route]: response({ message: 'Invalid amount' }, status) })
-    await failure(protocol[method](OPTIONS), ValueError, 'Invalid amount')
-  })
+    test('resolves a historical fallback past null and unrelated catalog rows', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([null, {}, { ...DUMMY_ASSETS[0], buyable: false, sellable: false }]),
+        'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, outputAssetId: undefined })
+      })
+      const result = await protocol.getTransactionDetail('123')
 
-  test('maps a rejected transaction UID to ValueError', async () => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ message: 'Invalid UID' }, 422) })
-    await failure(protocol.getTransactionDetail('123'), ValueError, 'Invalid UID')
-  })
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
 
-  test.each([
-    [400, 'Invalid signature', 'UNAUTHORIZED'],
-    [401, 'Invalid signature format', 'UNAUTHORIZED'],
-    [400, 'Invalid signature format', 'INTERNAL_SERVER_ERROR'],
-    [400, 'Invalid signature ', 'INTERNAL_SERVER_ERROR'],
-    [400, 'invalid signature', 'INTERNAL_SERVER_ERROR'],
-    [400, 'Public key is required', 'INTERNAL_SERVER_ERROR'],
-    [422, 'Invalid signature', 'INTERNAL_SERVER_ERROR']
-  ])('auth HTTP %s preserves rejection %s with reason %s', async (status, message, reason) => {
-    const { protocol } = setup({ network: 'ethereum' }, { 'POST /v1/auth': response({ message }, status) })
-    await failure(protocol.buy(OPTIONS), ProviderError, message, reason)
-  })
+    test('maps a rejected transaction UID to ValueError', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ message: 'Invalid UID' }, 422) })
+      await failure(protocol.getTransactionDetail('123'), ValueError, 'Invalid UID')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
 
-  test.each([
-    ['buy', 'POST /v1/auth', 400, ['address must be a string', 'signature must be a string'], ProviderError, 'INTERNAL_SERVER_ERROR'],
-    ['buy', 'POST /v1/auth', 400, ['Invalid signature'], ProviderError, 'INTERNAL_SERVER_ERROR'],
-    ['buy', 'POST /v1/auth', 401, ['Unauthorized', 'Session expired'], ProviderError, 'UNAUTHORIZED'],
-    ['getSupportedCountries', 'GET /v1/country', 503, ['Unavailable', 'Try later'], ProviderError, 'INTERNAL_SERVER_ERROR'],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', 400, ['Invalid filter', 'Try later'], ProviderError, 'INTERNAL_SERVER_ERROR'],
-    ['getSupportedFiatCurrencies', 'GET /v1/fiat', 422, ['Invalid filter', 'Try later'], ProviderError, 'INTERNAL_SERVER_ERROR'],
-    ['quoteBuy', 'PUT /v1/buy/quote', 400, ['amount must be positive', 'asset must be valid'], ValueError, undefined],
-    ['quoteSell', 'PUT /v1/sell/quote', 422, ['amount must be positive', 'asset must be valid'], ValueError, undefined],
-    ['getTransactionDetail', 'GET /v1/transaction/detail/single?uid=123', 404, ['Transaction not found', 'Try later'], NoSuchElementError, undefined],
-    ['getTransactionDetail', `GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`, 400, ['Invalid signature', 'Challenge unavailable'], ProviderError, 'INTERNAL_SERVER_ERROR']
-  ])('%s preserves string-array errors from %s (%s)', async (method, route, status, messages, ErrorClass, reason) => {
-    const { protocol } = setup({ network: 'ethereum' }, { [route]: response({ message: messages }, status) })
-    await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), ErrorClass, messages.join('; '), reason)
-  })
+    test.each(['', '   '])('rejects an empty transaction UID', async TRANSACTION_UID => {
+      const { protocol } = setup()
+      await failure(protocol.getTransactionDetail(TRANSACTION_UID), ValueError, 'txId must be a non-empty UID')
+      expectInteractions([])
+    })
 
-  test.each([[{ a: 1 }], [['Invalid input']], [], { detail: 'Invalid input' }, null, '', ['Invalid input', '']].map(message => [message]))('uses HTTP 400 fallback for an empty or non-string message after parsing %#', async message => {
-    const { protocol } = setup({}, { 'GET /v1/country': response({ message }, 400) })
-    await failure(protocol.getSupportedCountries(), ProviderError, 'DFX HTTP 400', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('joins a string and a parsed numeric message with a semicolon', async () => {
-    const { protocol } = setup({}, { 'GET /v1/country': response({ message: ['Invalid input', 1] }, 400) })
-    await failure(protocol.getSupportedCountries(), ProviderError, 'Invalid input; 1', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('preserves a parsed numeric HTTP 422 message as a provider failure', async () => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ message: 1 }, 422) })
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, '1', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('preserves the geo-filter message from authentication', async () => {
-    const { protocol } = setup({ network: 'ethereum' }, { 'POST /v1/auth': response({ message: 'The country of IP address is not allowed' }, 403) })
-    await failure(protocol.buy(OPTIONS), ProviderError, 'The country of IP address is not allowed', 'FORBIDDEN')
-  })
-
-  test.each(['<html>Unavailable</html>', '{}', 'null'])('uses an HTTP fallback message for body %s', async body => {
-    const { protocol } = setup({}, { 'GET /v1/country': response(body, 503) })
-    await failure(protocol.getSupportedCountries(), ProviderError, 'DFX HTTP 503', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('preserves a network error as the cause', async () => {
-    const cause = new TypeError('dummy-network-failure')
-    const fetch = jest.fn().mockRejectedValue(cause)
-    const protocol = new DfxProtocol(undefined, { fetch })
-    const error = await failure(protocol.getSupportedCountries(), ProviderError, 'DFX network request failed', 'NETWORK_ERROR')
-    expect(error.cause).toBe(cause)
-    request(fetch, '/v1/country', 'GET')
-  })
-
-  test('maps response body transport failures to NETWORK_ERROR', async () => {
-    const cause = new TypeError('dummy-body-failure')
-    const body = { ok: true, status: 200, text: jest.fn().mockRejectedValue(cause) }
-    const { protocol } = setup({}, { 'GET /v1/country': body })
-    const error = await failure(protocol.getSupportedCountries(), ProviderError, 'DFX network request failed', 'NETWORK_ERROR')
-    expect(error.cause).toBe(cause)
-    expect(body.text).toHaveBeenCalledWith()
-  })
-
-  test.each([undefined, 10])('aborts requests at the configured deadline %s', async timeout => {
-    jest.useFakeTimers()
-    let signal
-    const fetch = jest.fn((url, init) => new Promise((resolve, reject) => {
-      signal = init.signal
-      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-    }))
-    const protocol = new DfxProtocol(undefined, { fetch, timeout })
-    const pending = failure(protocol.getSupportedCountries(), ProviderError, 'DFX request timed out', 'REQUEST_TIMEOUT')
-    await jest.advanceTimersByTimeAsync(timeout ?? 30000)
-    await pending
-    expect(signal.aborted).toBe(true)
-    expect(fetch).toHaveBeenCalledWith('https://api.dfx.swiss/v1/country', { method: 'GET', headers: { Accept: 'application/json' }, body: undefined, signal })
-    expect(jest.getTimerCount()).toBe(0)
-  })
-
-  test('defers missing-fetch failure until a public method is called', async () => {
-    // Exercise a runtime capability absence, not an HTTP implementation double.
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'fetch')
-    Reflect.deleteProperty(globalThis, 'fetch')
-    try {
+    test('requires authentication for details without misclassifying the UID', async () => {
       const protocol = new DfxProtocol()
-      await failure(protocol.getSupportedCountries(), ProviderError, 'No fetch implementation available', 'INTERNAL_SERVER_ERROR')
-    } finally {
-      if (descriptor) Object.defineProperty(globalThis, 'fetch', descriptor)
-    }
-  })
-
-  test('uses the ambient fetch when no implementation is supplied', async () => {
-    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(response([]))
-    const protocol = new DfxProtocol()
-    expect(await protocol.getSupportedCountries()).toEqual([])
-    request(fetch, '/v1/country', 'GET')
-  })
-
-  test.each(['{', '{"value":01}', '{"value":1e}', '{"value":NaN}', '{12:3}'])('rejects malformed JSON %s', async body => {
-    const { protocol } = setup({}, { 'GET /v1/country': response(body) })
-    await failure(protocol.getSupportedCountries(), ProviderError, 'Invalid JSON in DFX response', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('preserves quoted digits, escaped quotes and backslashes in JSON strings', async () => {
-    const countries = [{ symbol: 'CH', name: 'Area 12 "North" \\ 3', bankAllowed: true }]
-    const { protocol } = setup({}, { 'GET /v1/country': response(countries) })
-    expect(await protocol.getSupportedCountries()).toEqual([{ code: 'CH', name: 'Area 12 "North" \\ 3', isBuyAllowed: true, isSellAllowed: true }])
-  })
-
-  test.each([
-    ['getSupportedCryptoAssets', 'GET /v1/asset', {}],
-    ['getSupportedFiatCurrencies', 'GET /v1/fiat', null],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], name: '' }]],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], buyable: undefined }]],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], sellable: undefined }]],
-    ['getSupportedCryptoAssets', 'GET /v1/asset', [{ ...DUMMY_ASSETS[0], blockchain: null }]],
-    ['getSupportedCountries', 'GET /v1/country', {}],
-    ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], bankAllowed: 'true' }]],
-    ['getSupportedCountries', 'GET /v1/country', [null]],
-    ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], symbol: false }]],
-    ['getSupportedCountries', 'GET /v1/country', [{ ...DUMMY_COUNTRIES[0], symbol: '' }]]
-  ])('%s rejects malformed metadata case %#', async (method, route, body) => {
-    const { protocol } = setup({}, { [route]: response(body) })
-    await failure(protocol[method](), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test.each([-1, 256, 1.5])('rejects invalid asset decimals %s', async decimals => {
-    const { protocol } = setup({}, { 'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], decimals }]) })
-    await failure(protocol.getSupportedCryptoAssets(), ProviderError, 'Invalid asset decimals', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test.each([0, -1, 1.5, '9007199254740992'])('rejects invalid provider identifiers %s', async id => {
-    const { protocol } = setup({}, { 'GET /v1/fiat': response([{ ...DUMMY_FIAT[0], id }]) })
-    await failure(protocol.getSupportedFiatCurrencies(), ProviderError, 'Invalid DFX identifier', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('excludes null decimals but keeps zero decimals and optional asset names', async () => {
-    const { protocol } = setup({}, { 'GET /v1/asset': response([
-      { ...DUMMY_ASSETS[0], decimals: null }, { ...DUMMY_ASSETS[4], decimals: 0, description: undefined }
-    ]) })
-    expect(await protocol.getSupportedCryptoAssets()).toEqual([{ code: 'BUY', networkCode: 'ethereum', decimals: 0, name: undefined }])
-  })
-
-  test.each(['', '   '])('rejects an empty transaction UID', async uid => {
-    const { protocol, fetch } = setup()
-    await failure(protocol.getTransactionDetail(uid), ValueError, 'txId must be a non-empty UID')
-    expect(fetch.mock.calls).toEqual([])
-  })
-
-  test('requires authentication for details without misclassifying the UID', async () => {
-    const protocol = new DfxProtocol()
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'A signing account is required for transaction details', 'UNAUTHORIZED')
-  })
-
-  test.each([
-    ['Completed', 'completed'], ['Failed', 'failed'], ['Returned', 'failed'], ['Stopped', 'failed'],
-    ['LimitExceeded', 'failed'], ['FeeTooHigh', 'failed'], ['PriceUndeterminable', 'failed'],
-    ['Created', 'in_progress'], ['Processing', 'in_progress'], ['LiquidityPending', 'in_progress'],
-    ['CheckPending', 'in_progress'], ['KycRequired', 'in_progress'], ['PayoutInProgress', 'in_progress'],
-    ['WaitingForPayment', 'in_progress'], ['Unassigned', 'in_progress'], ['ReturnPending', 'in_progress'], ['NewState', 'in_progress']
-  ])('maps transaction state %s to %s', async (state, status) => {
-    const { protocol, fetch, account } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, state }) })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status })
-    request(fetch, '/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-session')
-    request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature"}`)
-    expect(account.getAddress).toHaveBeenCalledWith()
-    expect(account.sign).toHaveBeenCalledWith('[dev]_Sign this exact message')
-  })
-
-  test('maps sell transaction IDs to the correct catalogs', async () => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ uid: '123', type: 'Sell', state: 'Completed', inputAssetId: 1, outputAssetId: 12 }) })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'CHF', status: 'completed' })
-  })
-
-  test('encodes the transaction UID without converting it to an internal numeric ID', async () => {
-    const { protocol, fetch } = setup({}, { 'GET /v1/transaction/detail/single?uid=123%2F%3F%26': response(DUMMY_DETAIL) })
-    expect(await protocol.getTransactionDetail('123/?&')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    request(fetch, '/v1/transaction/detail/single?uid=123%2F%3F%26', 'GET', undefined, 'dummy-session')
-  })
-
-  test.each(['Swap', 'Referral'])('rejects non-fiat transaction type %s', async type => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, type }) })
-    await failure(protocol.getTransactionDetail('123'), NoSuchElementError, 'Transaction is not a DFX fiat transaction')
-  })
-
-  test('rejects an unknown transaction type', async () => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, type: 'Unknown' }) })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unknown DFX transaction type', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('maps transaction HTTP 404 to NoSuchElementError', async () => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ message: 'Transaction not found' }, 404) })
-    await failure(protocol.getTransactionDetail('123'), NoSuchElementError, 'Transaction not found')
-  })
-
-  test.each([
-    { inputAssetId: undefined, outputAssetId: undefined },
-    { inputAssetId: 999, outputAssetId: 999 },
-    { inputAssetId: null, outputAssetId: null, outputAsset: 'ETH' }
-  ])('uses unambiguous string fallback when catalog IDs cannot resolve', async override => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, ...override }) })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-  })
-
-  test.each([
-    { outputAsset: 'USDT' }, { inputAsset: 'CHF' }, { outputBlockchain: 'Tron' }
-  ])('rejects contradictory ID and string metadata', async override => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, ...override }) })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Conflicting transaction asset metadata', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test.each([
-    { outputAssetId: undefined, outputAsset: undefined },
-    { outputAssetId: undefined, outputAsset: 'USDT', outputBlockchain: undefined },
-    { inputAssetId: undefined, inputAsset: 'ZZY' }
-  ])('rejects unresolved or ambiguous transaction metadata', async override => {
-    const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, ...override }) })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unable to resolve transaction asset', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test('reuses a session for later transaction detail calls', async () => {
-    const { protocol, account } = setup()
-    const expected = { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' }
-    expect(await protocol.getTransactionDetail('123')).toEqual(expected)
-    expect(await protocol.getTransactionDetail('123')).toEqual(expected)
-    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message']])
-  })
-
-  test('renews the session once after HTTP 401 and retries with the fresh token', async () => {
-    let calls = 0
-    let auth = 0
-    const { protocol, fetch, account } = setup({}, {
-      'POST /v1/auth': () => response({ accessToken: `dummy-${++auth}` }),
-      'GET /v1/transaction/detail/single?uid=123': () => ++calls === 1 ? response({}, 401) : response(DUMMY_DETAIL)
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'A signing account is required for transaction details', 'UNAUTHORIZED')
+      expectRequests(transportMock.mock.calls, [])
+      expectInteractions([])
     })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    request(fetch, '/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-1')
-    const retry = fetch.mock.calls.filter(([url]) => url.endsWith('/detail/single?uid=123'))[1]
-    expect(retry[1].headers).toEqual({ Accept: 'application/json', Authorization: 'Bearer dummy-2' })
-    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']])
-    expect(calls).toBe(2)
-  })
 
-  test('stops after a second HTTP 401', async () => {
-    const { protocol, fetch, account } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({}, 401) })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 401', 'UNAUTHORIZED')
-    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']])
-    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/detail/single?uid=123')).length).toBe(2)
-  })
+    test.each([
+      ['Completed', 'completed'], ['Failed', 'failed'], ['Returned', 'failed'], ['Stopped', 'failed'],
+      ['LimitExceeded', 'failed'], ['FeeTooHigh', 'failed'], ['PriceUndeterminable', 'failed'],
+      ['Created', 'in_progress'], ['Processing', 'in_progress'], ['LiquidityPending', 'in_progress'],
+      ['CheckPending', 'in_progress'], ['KycRequired', 'in_progress'], ['PayoutInProgress', 'in_progress'],
+      ['WaitingForPayment', 'in_progress'], ['Unassigned', 'in_progress'], ['ReturnPending', 'in_progress'], ['NewState', 'in_progress']
+    ])('maps transaction state %s to %s', async (DUMMY_STATE, EXPECTED_STATUS) => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, state: DUMMY_STATE }) })
+      const result = await protocol.getTransactionDetail('123')
 
-  test('does not refresh an expired session when signing is no longer available', async () => {
-    let calls = 0
-    const { protocol, account } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': () => ++calls === 1 ? response(DUMMY_DETAIL) : response({}, 401) })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    account.sign = undefined
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 401', 'UNAUTHORIZED')
-    expect(calls).toBe(2)
-  })
-
-  test('does not retry other provider errors on transaction details', async () => {
-    const { protocol, account } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({}, 503) })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 503', 'INTERNAL_SERVER_ERROR')
-    expect(account.sign.mock.calls).toEqual([['[dev]_Sign this exact message']])
-  })
-
-  test.each([
-    ['cardano', 'Cardano'], ['arweave', 'Arweave'], ['internetcomputer', 'InternetComputer'], ['binancesmartchain', 'BinanceSmartChain'], ['unknown', undefined]
-  ])('auth maps network %s to its complete DFX enum value', async (network, blockchain) => {
-    const { protocol, fetch } = setup({ network, publicKey: 'dummy-public-key' })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    const chain = blockchain === undefined ? '' : `,"blockchain":"${blockchain}"`
-    request(fetch, '/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature"${chain},"key":"dummy-public-key"}`)
-  })
-
-  test.each(['buy', 'sell', 'getTransactionDetail'].flatMap(method => ['sign', 'getAddress'].map(operation => [method, operation])))('%s wraps non-allowlisted errors from %s with their cause', async (method, operation) => {
-    const cause = new NotImplementedError('dummy-operation')
-    const { protocol, account } = setup({ network: 'ethereum' })
-    account[operation].mockRejectedValue(cause)
-    const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
-    expect(error.cause).toBe(cause)
-    expect(account[operation]).toHaveBeenCalledWith(...(operation === 'sign' ? ['[dev]_Sign this exact message'] : []))
-  })
-
-  test.each([
-    ['buy', new AccountRequiredError('dummy-allowed')],
-    ['buy', new ValueError('dummy-allowed')],
-    ['buy', new ProviderRequiredError('dummy-allowed')],
-    ['buy', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })],
-    ['buy', new BuyError('dummy-allowed', { reason: 'INSUFFICIENT_FUNDS' })],
-    ['buy', new MaximumFeeExceededError('dummy-allowed')],
-    ['sell', new SellError('dummy-allowed', { reason: 'INSUFFICIENT_FUNDS' })],
-    ['sell', new AccountRequiredError('dummy-allowed')],
-    ['sell', new MaximumFeeExceededError('dummy-allowed')],
-    ['sell', new ProviderRequiredError('dummy-allowed')],
-    ['sell', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })],
-    ['sell', new ValueError('dummy-allowed')],
-    ['getTransactionDetail', new ProviderRequiredError('dummy-allowed')],
-    ['getTransactionDetail', new ProviderError('dummy-allowed', { reason: 'NETWORK_ERROR' })]
-  ].flatMap(([method, cause]) => ['getAddress', 'sign'].map(operation => [method, cause, operation])))('%s preserves exact allowlisted error case %#', async (method, cause, operation) => {
-    const { protocol, account } = setup({ network: 'ethereum' })
-    account[operation].mockRejectedValue(cause)
-    const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), cause.constructor, 'dummy-allowed', cause.reason)
-    expect(error).toBe(cause)
-  })
-
-  test.each([
-    ['buy', new SellError('dummy-disallowed', { reason: 'INSUFFICIENT_FUNDS' })],
-    ['sell', new BuyError('dummy-disallowed', { reason: 'INSUFFICIENT_FUNDS' })],
-    ['buy', new ReadOnlyAccountRequiredError('dummy-disallowed')],
-    ['sell', new ReadOnlyAccountRequiredError('dummy-disallowed')],
-    ['getTransactionDetail', new ReadOnlyAccountRequiredError('dummy-disallowed')],
-    ['getTransactionDetail', new ValueError('dummy-disallowed')],
-    ['getTransactionDetail', new NoSuchElementError('dummy-disallowed')],
-    ['getTransactionDetail', null]
-  ])('%s wraps WDK errors absent from its contract', async (method, cause) => {
-    const { protocol, account } = setup({ network: 'ethereum' })
-    account.sign.mockRejectedValue(cause)
-    const error = await failure(protocol[method](method === 'getTransactionDetail' ? '123' : OPTIONS), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
-    expect(error.cause).toBe(cause)
-  })
-
-  test.each(['getAddress', 'sign'])('wraps a ProviderError subclass from %s on transaction details', async operation => {
-    class AccountProviderError extends ProviderError {}
-    const cause = new AccountProviderError('dummy-subclass', { reason: 'NETWORK_ERROR' })
-    const { protocol, account } = setup()
-    account[operation].mockRejectedValue(cause)
-    const error = await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
-    expect(error).not.toBe(cause)
-    expect(error.cause).toBe(cause)
-  })
-
-  test('encodes address query parameters and signs only the returned message', async () => {
-    const address = 'dummy/address?with&query=1'
-    const { protocol, account, fetch } = setup({}, { 'GET /v1/auth/signMessage?address=dummy%2Faddress%3Fwith%26query%3D1': response({ message: 'Exact "message" 1e18 \\ 2' }) })
-    account.getAddress.mockResolvedValue(address)
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    expect(account.sign).toHaveBeenCalledWith('Exact "message" 1e18 \\ 2')
-    request(fetch, '/v1/auth/signMessage?address=dummy%2Faddress%3Fwith%26query%3D1', 'GET')
-  })
-
-  test.each([
-    ['POST /v1/auth', {}], ['POST /v1/auth', { accessToken: '' }],
-    [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`, { message: '' }],
-    ['GET /v1/transaction/detail/single?uid=123', null]
-  ])('rejects malformed authenticated responses', async (route, body) => {
-    const { protocol } = setup({}, { [route]: response(body) })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test.each([
-    ['JPY', 13, 100n, '100'],
-    ['BHD', 14, 1234n, '1.234'],
-    ['CLF', 17, 12345n, '1.2345']
-  ])('uses ISO minor units for %s in quote requests and responses', async (name, id, amount, literal) => {
-    const { protocol, fetch } = setup({}, {
-      'GET /v1/fiat': response([{ id, name, buyable: true, sellable: true }]),
-      'PUT /v1/buy/quote': response(`{"isValid":true,"amount":${literal},"estimatedAmount":1,"rate":${literal},"fees":{"total":0}}`)
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: EXPECTED_STATUS })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
-    expect(await protocol.quoteBuy({ cryptoAsset: 'ETH', fiatCurrency: name, fiatAmount: amount })).toEqual({
-      cryptoAmount: 1000000000000000000n, fiatAmount: amount, fee: 0n, rate: literal
-    })
-    request(fetch, '/v1/buy/quote', 'PUT', `{"currency":{"name":"${name}"},"asset":{"id":1},"specialCode":"","paymentMethod":"Bank","amount":${literal}}`)
-  })
 
-  test('resolves historical transactions even when an asset has no decimals', async () => {
-    const { protocol } = setup({}, {
-      'GET /v1/transaction/detail/single?uid=123': response({
-        uid: '123', type: 'Buy', state: 'Completed', inputAssetId: 11, outputAssetId: 4
+    test('maps sell transaction IDs to the correct catalogs', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ uid: '123', type: 'Sell', state: 'Completed', inputAssetId: 1, outputAssetId: 12 }) })
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'CHF', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('encodes the transaction UID without converting it to an internal numeric ID', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123%2F%3F%26': response(DUMMY_DETAIL) })
+      const result = await protocol.getTransactionDetail('123/?&')
+
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?uid=123%2F%3F%26', 'GET', undefined, 'dummy-session'), ...CATALOG_REQUESTS],
+      [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each(['Swap', 'Referral'])('rejects non-fiat transaction type %s', async DUMMY_TYPE => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, type: DUMMY_TYPE }) })
+      await failure(protocol.getTransactionDetail('123'), NoSuchElementError, 'Transaction is not a DFX fiat transaction')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('rejects an unknown transaction type', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, type: 'Unknown' }) })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unknown DFX transaction type', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('maps transaction HTTP 404 to NoSuchElementError', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ message: 'Transaction not found' }, 404) })
+      await failure(protocol.getTransactionDetail('123'), NoSuchElementError, 'Transaction not found')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([
+      { inputAssetId: undefined, outputAssetId: undefined },
+      { inputAssetId: 999, outputAssetId: 999 },
+      { inputAssetId: null, outputAssetId: null, outputAsset: 'ETH' }
+    ])('uses unambiguous string fallback when catalog IDs cannot resolve', async DUMMY_OVERRIDE => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, ...DUMMY_OVERRIDE }) })
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([
+      { outputAsset: 'USDT' }, { inputAsset: 'CHF' }, { outputBlockchain: 'Tron' }
+    ])('rejects contradictory ID and string metadata', async DUMMY_OVERRIDE => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, ...DUMMY_OVERRIDE }) })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'Conflicting transaction asset metadata', 'INTERNAL_SERVER_ERROR')
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([
+      { outputAssetId: undefined, outputAsset: undefined },
+      { outputAssetId: undefined, outputAsset: 'USDT', outputBlockchain: undefined },
+      { inputAssetId: undefined, inputAsset: 'ZZY' }
+    ])('rejects unresolved or ambiguous transaction metadata', async DUMMY_OVERRIDE => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({ ...DUMMY_DETAIL, ...DUMMY_OVERRIDE }) })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unable to resolve transaction asset', 'INTERNAL_SERVER_ERROR')
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('reuses an existing session for transaction details', async () => {
+      const { protocol } = setup({ network: 'ethereum' })
+      const EXPECTED_RESULT = { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' }
+      await protocol.buy(OPTIONS)
+
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual(EXPECTED_RESULT)
+      expectInteractions([...ETH_WIDGET_REQUESTS, DETAIL_REQUEST, ...CATALOG_REQUESTS], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('renews the session once after HTTP 401 and retries with the fresh token', async () => {
+      let calls = 0
+      let auth = 0
+      const { protocol } = setup({}, {
+        'POST /v1/auth': () => response({ accessToken: `dummy-${++auth}` }),
+        'GET /v1/transaction/detail/single?uid=123': () => ++calls === 1 ? response({}, 401) : response(DUMMY_DETAIL)
       })
-    })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'BTC', fiatCurrency: 'EUR', status: 'completed' })
-  })
+      const result = await protocol.getTransactionDetail('123')
 
-  test('uses the transaction blockchain to disambiguate ticker fallback', async () => {
-    const { protocol } = setup({}, {
-      'GET /v1/transaction/detail/single?uid=123': response({
-        uid: '123', type: 'Buy', state: 'Completed', inputAssetId: 11, outputAsset: 'USDT', outputBlockchain: 'Tron'
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-1'),
+        CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-2'), ...CATALOG_REQUESTS],
+      [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
+    })
+
+    test('stops after a second HTTP 401', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({}, 401) })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 401', 'UNAUTHORIZED')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST, CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST],
+        [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
+    })
+
+    test('does not refresh an expired session when signing is no longer available', async () => {
+      const { protocol, account } = setup({ network: 'ethereum' }, { 'GET /v1/transaction/detail/single?uid=123': response({}, 401) })
+      await protocol.buy(OPTIONS)
+      account.sign = undefined
+
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 401', 'UNAUTHORIZED')
+
+      expectInteractions([...ETH_WIDGET_REQUESTS, DETAIL_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('does not retry other provider errors on transaction details', async () => {
+      const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({}, 503) })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 503', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each([
+      ['cardano', 'Cardano'], ['arweave', 'Arweave'], ['internetcomputer', 'InternetComputer'], ['binancesmartchain', 'BinanceSmartChain'], ['unknown', undefined]
+    ])('auth maps network %s to its complete DFX enum value', async (NETWORK, EXPECTED_BLOCKCHAIN) => {
+      const { protocol } = setup({ network: NETWORK, publicKey: 'dummy-public-key' })
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      const EXPECTED_CHAIN = EXPECTED_BLOCKCHAIN === undefined ? '' : `,"blockchain":"${EXPECTED_BLOCKCHAIN}"`
+      expectInteractions([CHALLENGE_REQUEST,
+        httpRequest('/v1/auth', 'POST', `{"address":"${DUMMY_ADDRESS}","signature":"dummy-signature"${EXPECTED_CHAIN},"key":"dummy-public-key"}`),
+        DETAIL_REQUEST, ...CATALOG_REQUESTS], [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test.each(['getAddress', 'sign'])('wraps a ProviderError subclass from %s on transaction details', async ACCOUNT_OPERATION => {
+      class AccountProviderError extends ProviderError {}
+      const DUMMY_CAUSE = new AccountProviderError('dummy-subclass', { reason: 'NETWORK_ERROR' })
+      const { protocol } = setup()
+      const accountMock = ACCOUNT_OPERATION === 'sign' ? signMock : getAddressMock
+      accountMock.mockRejectedValue(DUMMY_CAUSE)
+      const error = await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+      expect(error.cause).toBe(DUMMY_CAUSE)
+      expectInteractions(ACCOUNT_OPERATION === 'sign' ? [CHALLENGE_REQUEST] : [],
+        ACCOUNT_OPERATION === 'sign' ? [['[dev]_Sign this exact message']] : [], [[]])
+    })
+
+    test('encodes address query parameters and signs only the returned message', async () => {
+      const DUMMY_ACCOUNT_ADDRESS = 'dummy-address/with?query=1&extra=2'
+      const { protocol } = setup({}, { 'GET /v1/auth/signMessage?address=dummy-address%2Fwith%3Fquery%3D1%26extra%3D2': response({ message: 'Exact "message" 1e18 \\ 2' }) })
+      getAddressMock.mockResolvedValue(DUMMY_ACCOUNT_ADDRESS)
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions([
+        httpRequest('/v1/auth/signMessage?address=dummy-address%2Fwith%3Fquery%3D1%26extra%3D2'),
+        httpRequest('/v1/auth', 'POST', '{"address":"dummy-address/with?query=1&extra=2","signature":"dummy-signature"}'),
+        DETAIL_REQUEST, ...CATALOG_REQUESTS], [['Exact "message" 1e18 \\ 2']], [[]])
+    })
+
+    test.each([
+      ['POST /v1/auth', {}], ['POST /v1/auth', { accessToken: '' }],
+      [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`, { message: '' }],
+      ['GET /v1/transaction/detail/single?uid=123', null]
+    ])('rejects malformed authenticated responses', async (ROUTE, DUMMY_BODY) => {
+      const { protocol } = setup({}, { [ROUTE]: response(DUMMY_BODY) })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
+      expectInteractions(ROUTE === 'POST /v1/auth' ? [CHALLENGE_REQUEST, AUTH_REQUEST]
+        : ROUTE === 'GET /v1/transaction/detail/single?uid=123' ? [CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST] : [CHALLENGE_REQUEST],
+      ROUTE.startsWith('GET /v1/auth/') ? [] : [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('resolves historical transactions even when an asset has no decimals', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/transaction/detail/single?uid=123': response({
+          uid: '123', type: 'Buy', state: 'Completed', inputAssetId: 11, outputAssetId: 4
+        })
       })
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual({ cryptoAsset: 'BTC', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
-    expect(await protocol.getTransactionDetail('123')).toEqual({ cryptoAsset: 'USDT', fiatCurrency: 'EUR', status: 'completed' })
-  })
 
-  test('encodes widget session and language values without adding query parameters', async () => {
-    const { protocol } = setup({ network: 'ethereum', language: 'de&extra=1' }, {
-      'POST /v1/auth': response({ accessToken: 'dummy+/=&token' })
+    test('uses the transaction blockchain to disambiguate ticker fallback', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/transaction/detail/single?uid=123': response({
+          uid: '123', type: 'Buy', state: 'Completed', inputAssetId: 11, outputAsset: 'USDT', outputBlockchain: 'Tron'
+        })
+      })
+      const result = await protocol.getTransactionDetail('123')
+
+      expect(result).toEqual({ cryptoAsset: 'USDT', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
-    expect(await protocol.buy(OPTIONS)).toEqual({
-      buyUrl: 'https://app.dfx.swiss/buy?session=dummy%2B%2F%3D%26token&lang=de%26extra%3D1&asset-in=EUR&asset-out=ETH&blockchain=Ethereum&amount-in=100'
+
+    test.each(INVALID_EXTERNAL_IDS.map(ID => [ID]))('rejects invalid external detail ID before HTTP %#', async ID => {
+      const { protocol } = setup()
+      await failure(protocol.getTransactionDetail(ID, { idType: 'externalTransactionId' }), ValueError, EXTERNAL_ID_MESSAGE)
+      expectInteractions([])
     })
-  })
 
+    test.each(['a', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-', 'x'.repeat(256)])('looks up allowed external ID %# unchanged', async ID => {
+      const PATH = `/v1/transaction/detail/single?${new URLSearchParams({ 'external-id': ID })}`
+      const { protocol } = setup({}, { [`GET ${PATH}`]: response(DUMMY_DETAIL) })
+      const result = await protocol.getTransactionDetail(ID, { idType: 'externalTransactionId' })
 
-  test.each([
-    { error: 'AmountTooLow', message: 'Quote input rejected' },
-    { errors: [{ error: 'AmountTooHigh' }], message: 'Quote input rejected' },
-    { error: 'Bad Request', message: 'amount must be positive' },
-    { error: 'Unprocessable Entity', message: ['targetAmount must be positive'] }
-  ])('attributes HTTP validation failures to input using codes or explicit fields', async body => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body, 400) })
-    const message = typeof body.message === 'string' ? body.message : body.message.join('; ')
-    await failure(protocol.quoteBuy(OPTIONS), ValueError, message)
-  })
-
-  test.each([
-    { error: 'KycRequired', message: 'KYC must be completed' },
-    { error: 'BankTransactionMissing', message: 'Bank setup incomplete' },
-    { message: 'Unclassified failure' },
-    { message: [{ a: 1 }] },
-    {},
-    null
-  ])('does not attribute an unknown HTTP 422 failure to caller input', async body => {
-    const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(body, 422) })
-    const message = typeof body?.message === 'string' ? body.message : 'DFX HTTP 422'
-    await failure(protocol.quoteBuy(OPTIONS), ProviderError, message, 'INTERNAL_SERVER_ERROR')
-  })
-
-})
-
-describe('sandbox authentication formats and wallet transaction identifiers', () => {
-  const solana = '00'.repeat(62) + '0d24'
-  const der = '304402210080' + '00'.repeat(31) + '021f01' + '00'.repeat(30)
-  const compact = '80' + '00'.repeat(31) + '0001' + '00'.repeat(30)
-
-  test.each([
-    ['solana', solana, '1'.repeat(62) + '211'],
-    ['spark', der, compact], ['SoLaNa', solana, '1'.repeat(62) + '211'],
-    ['ethereum', solana, solana], ['tron', der, der],
-    [undefined, solana, solana], ['spark', compact, compact]
-  ])('POST auth uses only constructor network %s for normalization %#', async (network, signature, expected) => {
-    const { protocol, account, fetch } = setup({ network })
-    account.sign.mockResolvedValue(signature)
-    await protocol.getTransactionDetail('123')
-    const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === 'POST')[1].body)
-    expect(body.signature).toBe(expected)
-    expect(account.sign).toHaveBeenCalledWith('[dev]_Sign this exact message')
-  })
-
-  test.each(['buy', 'sell'].flatMap(method => ['a', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-', 'x'.repeat(256)].map(id => [method, id])))('%s appends an encoded external ID %#', async (method, id) => {
-    const { protocol } = setup({ network: 'ethereum' })
-    const result = await protocol[method]({ ...OPTIONS, config: { externalTransactionId: id } })
-    const url = new URL(result[`${method}Url`])
-    expect([...url.searchParams.keys()]).toEqual(['session', 'lang', 'asset-in', 'asset-out', 'blockchain', method === 'buy' ? 'amount-in' : 'amount-out', 'external-transaction-id'])
-    expect(url.searchParams.get('external-transaction-id')).toBe(id)
-    expect(url.search).toContain(`external-transaction-id=${new URLSearchParams({ id }).toString().slice(3)}`)
-  })
-
-  const invalidExternalIds = ['', '  ', 'x'.repeat(257), ' leading', 'trailing ', 'a b', '<id>', 'id>', 'a/b', 'a?b', 'a&b', 'a=b', 'a+b', 'a#b', 'a%b', 'ümlaut', 'a\nb', 'a\n', 'a\r', 'a\t', 'a\u0000', 'a\u200b']
-  const externalIdMessage = 'externalTransactionId must contain 1–256 characters from A-Z, a-z, 0-9, dot (.), underscore (_), colon (:) and hyphen (-)'
-
-  test.each(['buy', 'sell'].flatMap(method => invalidExternalIds.map(id => [method, id])))('%s rejects invalid external ID before HTTP %#', async (method, id) => {
-    const { protocol, fetch } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ ...OPTIONS, config: { externalTransactionId: id } }), ValueError, externalIdMessage)
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  test.each(invalidExternalIds.map(id => [id]))('rejects invalid external detail ID before HTTP %#', async id => {
-    const { protocol, fetch } = setup()
-    await failure(protocol.getTransactionDetail(id, { idType: 'externalTransactionId' }), ValueError, externalIdMessage)
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  test.each(['a', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-', 'x'.repeat(256)])('looks up allowed external ID %# unchanged', async id => {
-    const path = `/v1/transaction/detail/single?${new URLSearchParams({ 'external-id': id })}`
-    const { protocol, fetch } = setup({}, { [`GET ${path}`]: response(DUMMY_DETAIL) })
-    expect(await protocol.getTransactionDetail(id, { idType: 'externalTransactionId' })).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    request(fetch, path, 'GET', undefined, 'dummy-session')
-  })
-
-  test.each(['buy', 'sell'])('%s omits the optional external ID', async method => {
-    const { protocol } = setup({ network: 'ethereum' })
-    const result = await protocol[method]({ ...OPTIONS, config: {} })
-    expect(new URL(result[`${method}Url`]).searchParams.has('external-transaction-id')).toBe(false)
-  })
-
-  test.each([undefined, {}, { idType: undefined }, { idType: 'uid' }])('detail defaults to UID %#', async options => {
-    const { protocol, fetch } = setup()
-    await protocol.getTransactionDetail('123', options)
-    request(fetch, '/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-session')
-  })
-
-  test('queries an encoded external ID and keeps it on session renewal', async () => {
-    let calls = 0
-    const path = '/v1/transaction/detail/single?external-id=wallet%3Aorder-1.2_3'
-    const { protocol, fetch, account } = setup({}, {
-      [`GET ${path}`]: () => ++calls === 1 ? response({}, 401) : response(DUMMY_DETAIL)
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest(PATH, 'GET', undefined, 'dummy-session'), ...CATALOG_REQUESTS], [['[dev]_Sign this exact message']], [[]])
     })
-    expect(await protocol.getTransactionDetail('wallet:order-1.2_3', { idType: 'externalTransactionId' })).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
-    expect(fetch.mock.calls.filter(([url]) => url.endsWith(path))).toHaveLength(2)
-    expect(account.sign).toHaveBeenCalledTimes(2)
-  })
 
-  test('external ID without a registered order remains NoSuchElementError', async () => {
-    const { protocol } = setup({}, {
-      'GET /v1/transaction/detail/single?external-id=pending': response({ message: 'Transaction not found' }, 404)
-    })
-    await failure(protocol.getTransactionDetail('pending', { idType: 'externalTransactionId' }), NoSuchElementError, 'Transaction not found')
-  })
+    test.each([undefined, {}, { idType: undefined }, { idType: 'uid' }])('detail defaults to UID %#', async INPUT_OPTIONS => {
+      const { protocol } = setup()
+      const result = await protocol.getTransactionDetail('123', INPUT_OPTIONS)
 
-  test('external ID resolving to a Swap remains NoSuchElementError', async () => {
-    const { protocol } = setup({}, {
-      'GET /v1/transaction/detail/single?external-id=swap': response({ ...DUMMY_DETAIL, type: 'Swap' })
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions(DETAIL_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
-    await failure(protocol.getTransactionDetail('swap', { idType: 'externalTransactionId' }), NoSuchElementError, 'Transaction is not a DFX fiat transaction')
-  })
 
-  test('challenge HTTP 400 is not treated as a rejected POST login', async () => {
-    const { protocol } = setup({}, {
-      [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: 'Invalid signature' }, 400)
+    test('queries an encoded external ID and keeps it on session renewal', async () => {
+      let calls = 0
+      const PATH = '/v1/transaction/detail/single?external-id=wallet%3Aorder-1.2_3'
+      const { protocol } = setup({}, {
+        [`GET ${PATH}`]: () => ++calls === 1 ? response({}, 401) : response(DUMMY_DETAIL)
+      })
+      const result = await protocol.getTransactionDetail('wallet:order-1.2_3', { idType: 'externalTransactionId' })
+
+      expect(result).toEqual({ cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' })
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest(PATH, 'GET', undefined, 'dummy-session'), CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest(PATH, 'GET', undefined, 'dummy-session'), ...CATALOG_REQUESTS],
+      [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
     })
-    await failure(protocol.getTransactionDetail('123'), ProviderError, 'Invalid signature', 'INTERNAL_SERVER_ERROR')
+
+    test('external ID without a registered order remains NoSuchElementError', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/transaction/detail/single?external-id=pending': response({ message: 'Transaction not found' }, 404)
+      })
+      await failure(protocol.getTransactionDetail('pending', { idType: 'externalTransactionId' }), NoSuchElementError, 'Transaction not found')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?external-id=pending', 'GET', undefined, 'dummy-session')],
+      [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('external ID resolving to a Swap remains NoSuchElementError', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/transaction/detail/single?external-id=swap': response({ ...DUMMY_DETAIL, type: 'Swap' })
+      })
+      await failure(protocol.getTransactionDetail('swap', { idType: 'externalTransactionId' }), NoSuchElementError, 'Transaction is not a DFX fiat transaction')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?external-id=swap', 'GET', undefined, 'dummy-session')],
+      [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('challenge HTTP 400 is not treated as a rejected POST login', async () => {
+      const { protocol } = setup({}, {
+        [`GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`]: response({ message: 'Invalid signature' }, 400)
+      })
+      await failure(protocol.getTransactionDetail('123'), ProviderError, 'Invalid signature', 'INTERNAL_SERVER_ERROR')
+      expectInteractions([CHALLENGE_REQUEST], [], [[]])
+    })
   })
 })

@@ -28,7 +28,6 @@ export default class DfxClient {
 
   /** @private */
   async _request (path, { method = 'GET', body, token, input = false, detail = false } = {}) {
-    if (typeof this._fetch !== 'function') throw unexpected('No fetch implementation available')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this._timeout)
     const headers = { Accept: 'application/json' }
