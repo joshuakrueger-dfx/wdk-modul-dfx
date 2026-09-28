@@ -75,7 +75,7 @@ application and opt-in integration tests.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `environment` | `'production'` | `'production'` or `'sandbox'`; unknown values throw `ValueError` at construction |
+| `environment` | `'production'` | Only `'sandbox'` selects sandbox; otherwise production is used |
 | `wallet` | unset | Partner identifier supplied by the integrating wallet developer; forwarded to both quotes and authentication |
 | `network` | unset | Account's DFX blockchain name, compared case-insensitively; required for `buy` and `sell` |
 | `publicKey` | unset | Public key sent as `key` during authentication (e.g. Arweave, Cardano, Internet Computer) |
@@ -83,12 +83,11 @@ application and opt-in integration tests.
 | `fetch` | `globalThis.fetch` | Injectable HTTP implementation called with `globalThis` as receiver; absence fails on the first request, not construction |
 | `timeout` | `30000` | Finite number greater than zero and at most `2147483647`; request deadline in milliseconds, implemented with `AbortController` |
 
-Configuration must be an object. When supplied, `network`, `wallet`, `publicKey`
-and `language` must be non-empty strings (whitespace-only strings are rejected).
-Invalid configuration throws `ValueError` in the constructor. All four trading
-methods reject missing, null or non-object options with `ValueError`.
-When supplied, `options.config` must be a non-null object and its `network` must
-be a non-empty string; invalid values throw `ValueError`.
+Argument types follow the declarations and are assumed correct at runtime.
+When supplied, `network`, `wallet`, `publicKey` and `language` must not be empty
+or whitespace-only; these values and out-of-range timeouts throw `ValueError`
+in the constructor. All four trading methods also reject an empty or
+whitespace-only `options.config.network` with `ValueError`.
 For `buy` and `sell`, `options.config.externalTransactionId` optionally supplies a
 string matching `^[A-Za-z0-9._:-]{1,256}$`. The same validation applies to external
 ID lookups; invalid values throw `ValueError`.
@@ -202,8 +201,9 @@ selection argument; provider geography restrictions can still reject a request.
 
 `txId` defaults to DFX `uid`, even if it looks numeric. Pass
 `{ idType: 'externalTransactionId' }` to query `external-id` instead.
-The optional second argument must be an object; `idType` accepts only `'uid'`
-or `'externalTransactionId'` and defaults to `'uid'`. Invalid options throw `ValueError`.
+The optional second argument has an `idType` of `'uid'` or
+`'externalTransactionId'`, defaulting to `'uid'`. Empty or whitespace-only UIDs
+and external IDs outside the documented character and length limits throw `ValueError`.
 Asset and fiat IDs
 resolve against their respective unfiltered catalogs, including inactive entries;
 only matched rows are strictly validated. Unambiguous catalog names are a

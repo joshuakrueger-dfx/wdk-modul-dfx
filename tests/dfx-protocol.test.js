@@ -416,15 +416,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ])
   })
 
-  test('rejects an unknown environment at construction', () => {
-    expect(() => new DfxProtocol(undefined, { environment: 'unknown' })).toThrow(new ValueError('environment must be production or sandbox'))
-  })
-
-  test.each([null, false, 1, 'config', [], () => {}].map(config => [config]))('rejects non-object configuration %#', config => {
-    expect(() => new DfxProtocol(undefined, config)).toThrow(new ValueError('config must be an object'))
-  })
-
-  test.each([null, false, '100', 0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', timeout => {
+  test.each([0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', timeout => {
     expect(() => new DfxProtocol(undefined, { timeout })).toThrow(new ValueError('timeout must be a finite number greater than zero'))
   })
 
@@ -444,27 +436,13 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   test.each(['network', 'wallet', 'publicKey', 'language'].flatMap(field =>
-    [null, false, 1, '', '  ', {}, []].map(value => [field, value])
+    ['', '  '].map(value => [field, value])
   ))('rejects invalid constructor string %s case %#', (field, value) => {
     expect(() => new DfxProtocol(undefined, { [field]: value })).toThrow(new ValueError(`${field} must be a non-empty string`))
   })
 
   test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    [undefined, null, false, 1, 'options', [], () => {}].map(options => [method, options])
-  ))('%s rejects non-object options %# before requiring an account', async (method, options) => {
-    await failure(new DfxProtocol()[method](options), ValueError, 'options must be an object')
-  })
-
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    [null, false, 1, 'config', [], () => {}].map(config => [method, config])
-  ))('%s rejects invalid per-operation config %#', async (method, config) => {
-    const { protocol, fetch } = setup({ network: 'ethereum' })
-    await failure(protocol[method]({ ...OPTIONS, config }), ValueError, 'options.config must be an object')
-    expect(fetch.mock.calls).toEqual([])
-  })
-
-  test.each(['buy', 'sell', 'quoteBuy', 'quoteSell'].flatMap(method =>
-    [null, false, 1, '', '  ', {}, []].map(network => [method, network])
+    ['', '  '].map(network => [method, network])
   ))('%s rejects invalid per-operation networks %#', async (method, network) => {
     const { protocol, fetch } = setup({ network: 'ethereum' })
     await failure(protocol[method]({ ...OPTIONS, config: { network } }), ValueError, 'network must be a non-empty string')
@@ -583,15 +561,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], blockchain }])
     })
     await failure(protocol.getSupportedCryptoAssets(), ProviderError, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR')
-  })
-
-  test.each([
-    { cryptoAsset: undefined }, { cryptoAsset: 1 }, { fiatCurrency: undefined }, { fiatCurrency: 1 }
-  ])('rejects invalid ticker fields %# as ValueError', async fields => {
-    const { protocol } = setup()
-    const field = Object.keys(fields)[0]
-    const message = field === 'cryptoAsset' ? `Unsupported buy asset or network: ${fields[field]}` : `Unsupported buy fiat currency: ${fields[field]}`
-    await failure(protocol.quoteBuy({ ...OPTIONS, ...fields }), ValueError, message)
   })
 
   test.each(['buy', 'sell'])('%s preserves DFX spelling with mixed-case input', async method => {
@@ -1419,7 +1388,7 @@ describe('sandbox authentication formats and wallet transaction identifiers', ()
     expect(url.search).toContain(`external-transaction-id=${new URLSearchParams({ id }).toString().slice(3)}`)
   })
 
-  const invalidExternalIds = [null, false, 1, '', '  ', {}, [], 'x'.repeat(257), ' leading', 'trailing ', 'a b', '<id>', 'id>', 'a/b', 'a?b', 'a&b', 'a=b', 'a+b', 'a#b', 'a%b', 'ümlaut', 'a\nb', 'a\n', 'a\r', 'a\t', 'a\u0000', 'a\u200b']
+  const invalidExternalIds = ['', '  ', 'x'.repeat(257), ' leading', 'trailing ', 'a b', '<id>', 'id>', 'a/b', 'a?b', 'a&b', 'a=b', 'a+b', 'a#b', 'a%b', 'ümlaut', 'a\nb', 'a\n', 'a\r', 'a\t', 'a\u0000', 'a\u200b']
   const externalIdMessage = 'externalTransactionId must contain 1–256 characters from A-Z, a-z, 0-9, dot (.), underscore (_), colon (:) and hyphen (-)'
 
   test.each(['buy', 'sell'].flatMap(method => invalidExternalIds.map(id => [method, id])))('%s rejects invalid external ID before HTTP %#', async (method, id) => {
@@ -1428,7 +1397,7 @@ describe('sandbox authentication formats and wallet transaction identifiers', ()
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  test.each([undefined, ...invalidExternalIds].map(id => [id]))('rejects invalid external detail ID before HTTP %#', async id => {
+  test.each(invalidExternalIds.map(id => [id]))('rejects invalid external detail ID before HTTP %#', async id => {
     const { protocol, fetch } = setup()
     await failure(protocol.getTransactionDetail(id, { idType: 'externalTransactionId' }), ValueError, externalIdMessage)
     expect(fetch).not.toHaveBeenCalled()
@@ -1451,12 +1420,6 @@ describe('sandbox authentication formats and wallet transaction identifiers', ()
     const { protocol, fetch } = setup()
     await protocol.getTransactionDetail('123', options)
     request(fetch, '/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-session')
-  })
-
-  test.each([null, false, 1, 'options', [], () => {}, { idType: null }, { idType: '' }, { idType: 'external-id' }])('rejects invalid detail options before HTTP %#', async options => {
-    const { protocol, fetch } = setup()
-    await expect(protocol.getTransactionDetail('123', options)).rejects.toBeInstanceOf(ValueError)
-    expect(fetch).not.toHaveBeenCalled()
   })
 
   test('queries an encoded external ID and keeps it on session renewal', async () => {

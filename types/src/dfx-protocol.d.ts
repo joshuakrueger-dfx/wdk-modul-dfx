@@ -14,7 +14,7 @@ export type SupportedCountry = import('@tetherto/wdk-wallet/protocols').Supporte
 
 /** Configuration for DFX API and widget access. */
 export interface DfxProtocolConfig {
-    /** API and app environment. Defaults to production. */
+    /** API and app environment. Only sandbox selects sandbox; otherwise production is used. */
     environment?: 'production' | 'sandbox';
     /** Partner identifier supplied by the integrating wallet developer. No default. */
     wallet?: string;
@@ -70,14 +70,12 @@ export default class DfxProtocol extends FiatProtocol {
      * @overload
      * @param {undefined} [account] - Omit for public API access. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
      * @param {DfxProtocolConfig} [config] - API and widget configuration.
-     * @throws {ValueError} If config is not an object.
-     * @throws {ValueError} If environment is unknown.
-     * @throws {ValueError} If timeout is not a finite positive number.
+     * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
-     * @throws {ValueError} If network is supplied but is not a non-empty string.
-     * @throws {ValueError} If wallet is supplied but is not a non-empty string.
-     * @throws {ValueError} If publicKey is supplied but is not a non-empty string.
-     * @throws {ValueError} If language is supplied but is not a non-empty string.
+     * @throws {ValueError} If network is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If wallet is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If publicKey is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If language is supplied but is empty or whitespace-only.
      */
     constructor(account?: undefined, config?: DfxProtocolConfig);
     /**
@@ -87,14 +85,12 @@ export default class DfxProtocol extends FiatProtocol {
      * @overload
      * @param {IWalletAccountReadOnly} account - Account available to the protocol. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
      * @param {DfxProtocolConfig} [config] - API and widget configuration.
-     * @throws {ValueError} If config is not an object.
-     * @throws {ValueError} If environment is unknown.
-     * @throws {ValueError} If timeout is not a finite positive number.
+     * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
-     * @throws {ValueError} If network is supplied but is not a non-empty string.
-     * @throws {ValueError} If wallet is supplied but is not a non-empty string.
-     * @throws {ValueError} If publicKey is supplied but is not a non-empty string.
-     * @throws {ValueError} If language is supplied but is not a non-empty string.
+     * @throws {ValueError} If network is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If wallet is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If publicKey is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If language is supplied but is empty or whitespace-only.
      */
     constructor(account: IWalletAccountReadOnly, config?: DfxProtocolConfig);
     /**
@@ -104,14 +100,12 @@ export default class DfxProtocol extends FiatProtocol {
      * @overload
      * @param {IWalletAccount} account - Account used to sign DFX authentication messages. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
      * @param {DfxProtocolConfig} [config] - API and widget configuration.
-     * @throws {ValueError} If config is not an object.
-     * @throws {ValueError} If environment is unknown.
-     * @throws {ValueError} If timeout is not a finite positive number.
+     * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
-     * @throws {ValueError} If network is supplied but is not a non-empty string.
-     * @throws {ValueError} If wallet is supplied but is not a non-empty string.
-     * @throws {ValueError} If publicKey is supplied but is not a non-empty string.
-     * @throws {ValueError} If language is supplied but is not a non-empty string.
+     * @throws {ValueError} If network is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If wallet is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If publicKey is supplied but is empty or whitespace-only.
+     * @throws {ValueError} If language is supplied but is empty or whitespace-only.
      */
     constructor(account: IWalletAccount, config?: DfxProtocolConfig);
     /**
@@ -126,8 +120,6 @@ export default class DfxProtocol extends FiatProtocol {
      * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
      * @returns {Promise<BuyResult>} The purchase widget URL.
      * @throws {AccountRequiredError} If a signing account is unavailable.
-     * @throws {ValueError} If options is not an object.
-     * @throws {ValueError} If options.config is not an object.
      * @throws {ValueError} If the asset or network is unsupported for buying.
      * @throws {ValueError} If the asset spelling is ambiguous on a network.
      * @throws {ValueError} If the asset is ambiguous across networks.
@@ -137,7 +129,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If exactly one amount is not supplied.
      * @throws {ValueError} If the amount is invalid.
      * @throws {ValueError} If the amount exceeds accepted precision.
-     * @throws {ValueError} If the per-operation network is not a non-empty string.
+     * @throws {ValueError} If the per-operation network is empty or whitespace-only.
      * @throws {ValueError} If the constructor network is missing.
      * @throws {ValueError} If the network differs from the account network.
      * @throws {ValueError} If recipient differs from the authentication address. Explicit Safe recipients are rejected.
@@ -156,8 +148,6 @@ export default class DfxProtocol extends FiatProtocol {
      *
      * @param {DfxBuyQuoteOptions} options - Purchase asset, currency and one amount in smallest units; optional config.network selects the network.
      * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
-     * @throws {ValueError} If options is not an object.
-     * @throws {ValueError} If options.config is not an object.
      * @throws {ValueError} If the asset or network is unsupported for buying.
      * @throws {ValueError} If the asset spelling is ambiguous on a network.
      * @throws {ValueError} If the asset is ambiguous across networks.
@@ -167,7 +157,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If exactly one amount is not supplied.
      * @throws {ValueError} If the amount is invalid.
      * @throws {ValueError} If the amount exceeds accepted precision.
-     * @throws {ValueError} If the per-operation network is not a non-empty string.
+     * @throws {ValueError} If the per-operation network is empty or whitespace-only.
      * @throws {ValueError} If DFX rejects quote input.
      * @throws {ProviderError} If the API fails.
      * @throws {ProviderError} If the API returns malformed quote data.
@@ -184,8 +174,6 @@ export default class DfxProtocol extends FiatProtocol {
      * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
      * @returns {Promise<SellResult>} The sale widget URL.
      * @throws {AccountRequiredError} If a signing account is unavailable.
-     * @throws {ValueError} If options is not an object.
-     * @throws {ValueError} If options.config is not an object.
      * @throws {ValueError} If the asset or network is unsupported for selling.
      * @throws {ValueError} If the asset spelling is ambiguous on a network.
      * @throws {ValueError} If the asset is ambiguous across networks.
@@ -195,7 +183,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If exactly one amount is not supplied.
      * @throws {ValueError} If the amount is invalid.
      * @throws {ValueError} If the amount exceeds accepted precision.
-     * @throws {ValueError} If the per-operation network is not a non-empty string.
+     * @throws {ValueError} If the per-operation network is empty or whitespace-only.
      * @throws {ValueError} If the constructor network is missing.
      * @throws {ValueError} If the network differs from the account network.
      * @throws {ValueError} If refundAddress differs from the authentication address. Explicit Safe refund addresses are rejected.
@@ -214,8 +202,6 @@ export default class DfxProtocol extends FiatProtocol {
      *
      * @param {DfxSellQuoteOptions} options - Sale asset, currency and one amount in smallest units; optional config.network selects the network.
      * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
-     * @throws {ValueError} If options is not an object.
-     * @throws {ValueError} If options.config is not an object.
      * @throws {ValueError} If the asset or network is unsupported for selling.
      * @throws {ValueError} If the asset spelling is ambiguous on a network.
      * @throws {ValueError} If the asset is ambiguous across networks.
@@ -225,7 +211,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If exactly one amount is not supplied.
      * @throws {ValueError} If the amount is invalid.
      * @throws {ValueError} If the amount exceeds accepted precision.
-     * @throws {ValueError} If the per-operation network is not a non-empty string.
+     * @throws {ValueError} If the per-operation network is empty or whitespace-only.
      * @throws {ValueError} If DFX rejects quote input.
      * @throws {ProviderError} If the API fails.
      * @throws {ProviderError} If the API returns malformed quote data.
@@ -242,9 +228,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @param {Object} [options] - Transaction lookup options.
      * @param {'uid' | 'externalTransactionId'} [options.idType] - Identifier type; defaults to uid.
      * @returns {Promise<FiatTransactionDetail>} Normalized transaction status and asset codes.
-     * @throws {ValueError} If options is not an object.
-     * @throws {ValueError} If idType is not uid or externalTransactionId.
-     * @throws {ValueError} If the UID is not a non-empty string.
+     * @throws {ValueError} If the UID is empty or whitespace-only.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ValueError} If the identifier is rejected by DFX.
      * @throws {NoSuchElementError} Until DFX has registered a transaction for this id.

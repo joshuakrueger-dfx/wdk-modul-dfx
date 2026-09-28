@@ -26,6 +26,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Follow C005 by trusting declared argument and account return types; retain value rules and external API response validation.
 - Cache recovered EVM signers only after successful authentication; reject
   mismatched known delivery addresses before signing or authentication requests.
 - Normalize null asset descriptions to undefined and align JSDoc with the
@@ -70,8 +71,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   strings. Empty strings or other element types make the entire array fall back
   to `DFX HTTP <status>`.
 - Bind injected and ambient fetch to the global receiver.
-- Reject invalid configuration, timeout, string options and trade options with ValueError.
-- Reject timeouts above 2147483647 ms and invalid per-operation config objects/networks.
+- Reject non-finite or non-positive timeouts and empty or whitespace-only string options with ValueError.
+- Reject timeouts above 2147483647 ms and empty or whitespace-only per-operation networks.
 - Prefer a unique exact spelling for asset collisions on one network; reject
   unresolved asset ambiguity and multiple matching fiat catalog rows.
 - Resolve ISO fiat minor units by exact uppercase catalog names; exclude rows
