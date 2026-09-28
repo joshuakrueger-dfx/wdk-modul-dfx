@@ -1,5 +1,7 @@
 const $ = id => document.getElementById(id)
 const state = { accounts: [], pairs: [], direction: 'buy', screen: 'welcome', revision: 0, quoteKey: null, busy: false, timer: null }
+state.balances = new Map()
+state.balancesBusy = false
 async function api (path, body) {
   const response = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const result = await response.json()
@@ -13,6 +15,7 @@ function show (screen) {
   state.screen = screen
   for (const id of ['welcome', 'portfolio', 'trade', 'orders']) $(id).hidden = screen !== id
   document.querySelector('.viewport').scrollTop = 0
+  if (screen === 'portfolio') refreshBalances()
 }
 function element (tag, text, className) {
   const node = document.createElement(tag)
@@ -48,23 +51,23 @@ function errorBox (target, error, override) {
   target.classList.add('error')
   target.replaceChildren(element('p', override ?? userError(error)), element('small', `${error?.class ?? 'Verbindungsfehler'}${error?.reason ? ` · ${error.reason}` : ''}`, 'technical'))
 }
-async function createWallet (restore) {
+async function createWallet (restore, prepared = false) {
   if (state.busy) return
   const seed = $('seed').value.trim()
   if (restore && !seed) { errorBox($('welcome-error'), { class: 'WalletInputError', message: 'Bitte Wiederherstellungswörter eingeben.' }); return }
   state.busy = true
-  $('create-wallet').disabled = $('restore-submit').disabled = true
+  $('create-wallet').disabled = $('restore-submit').disabled = $('load-prepared').disabled = true
   $('welcome-error').classList.remove('error')
   $('welcome-error').textContent = 'Deine Konten werden vorbereitet …'
   $('seed').value = ''
   try {
-    const wallet = await api('/api/wallet/create', { smartAccount: $('smart-account').checked, ...(restore ? { seed } : {}) })
+    const wallet = await api('/api/wallet/create', { smartAccount: $('smart-account').checked, ...(prepared ? { prepared: true } : restore ? { seed } : {}) })
     state.accounts = wallet.accounts
     renderAccounts()
     show('portfolio')
   } catch (error) { errorBox($('welcome-error'), error) } finally {
     state.busy = false
-    $('create-wallet').disabled = $('restore-submit').disabled = false
+    $('create-wallet').disabled = $('restore-submit').disabled = $('load-prepared').disabled = false
     refreshLog()
   }
 }
@@ -74,6 +77,9 @@ function renderAccounts () {
     const icon = element('span', account.chain === 'bitcoin' ? 'BTC' : account.name.slice(0, 3).toUpperCase(), `coin tone-${index % 5}`)
     const info = element('div', '', 'account-text')
     info.append(element('strong', `${account.name}${account.smartAccount && account.chain === 'ethereum' ? ' · Smart' : ''}`), element('small', `${account.address.slice(0, 7)}…${account.address.slice(-5)}`))
+    const balances = state.balances.get(account.chain)
+    const balance = element('small', balances?.length ? balances.map(entry => `${entry.amount === null ? '–' : money(entry.amount, 0)} ${entry.symbol}`).join(' · ') : '–', 'account-balance')
+    info.append(balance)
     const copy = element('button', '⧉', 'copy')
     copy.id = `copy-${account.chain}`
     copy.setAttribute('aria-label', `${account.name}: Adresse kopieren`)
@@ -84,6 +90,24 @@ function renderAccounts () {
     row.append(icon, info, copy)
     return row
   }))
+}
+async function refreshBalances () {
+  if (!state.accounts.length || state.balancesBusy) return
+  state.balancesBusy = true
+  $('refresh-balances').disabled = true
+  $('balance-status').textContent = 'Kontostände werden geladen …'
+  try {
+    const rows = await api('/api/balances')
+    state.balances = new Map(rows.map(row => [row.chain, row.balances]))
+    $('balance-status').textContent = `Abgerufen um ${new Date().toLocaleTimeString('de-DE')} · – = nicht verfügbar`
+  } catch {
+    state.balances.clear()
+    $('balance-status').textContent = 'Kontostände nicht verfügbar · Bitte erneut aktualisieren.'
+  } finally {
+    renderAccounts()
+    state.balancesBusy = false
+    $('refresh-balances').disabled = false
+  }
 }
 function payload () {
   const pair = state.pairs[Number($('asset-select').value)]
@@ -164,6 +188,7 @@ async function checkout () {
   try {
     const result = await api('/api/checkout', body)
     // Never insert the session-bearing URL as text or into diagnostics.
+    $('browser-domain').textContent = `🔒 ${new URL(result.url).hostname}`
     $('browser-frame').src = result.url
     $('browser-sheet').hidden = false
     document.querySelector('.viewport').inert = true
@@ -225,6 +250,8 @@ async function refreshLog () {
 }
 $('create-wallet').addEventListener('click', () => createWallet(false))
 $('restore-submit').addEventListener('click', () => createWallet(true))
+$('load-prepared').addEventListener('click', () => createWallet(false, true))
+$('refresh-balances').addEventListener('click', refreshBalances)
 $('btn-buy').addEventListener('click', () => openTrade('buy'))
 $('btn-sell').addEventListener('click', () => openTrade('sell'))
 $('btn-orders').addEventListener('click', openOrders)
@@ -240,6 +267,16 @@ setInterval(refreshLog, 2000)
 async function init () {
   try {
     const wallet = await api('/api/wallet')
+    state.environment = wallet.environment
+    const production = wallet.environment === 'production'
+    $('environment-badge').textContent = production ? 'PRODUCTION' : 'SANDBOX'
+    $('environment-badge').classList.toggle('production', production)
+    document.title = `Wallet · ${production ? 'Production' : 'Sandbox'}`
+    $('sandbox-note').hidden = production
+    $('production-note').hidden = !production
+    $('load-prepared').hidden = !wallet.preparedWallet
+    $('create-wallet').disabled = $('restore-submit').disabled = false
+    if (production) setInterval(refreshBalances, 30000)
     if (wallet.accounts.length) { state.accounts = wallet.accounts; renderAccounts(); show('portfolio') }
   } catch (error) { errorBox($('welcome-error'), error, 'Der lokale Wallet-Server ist nicht erreichbar. Bitte neu laden.') }
 }

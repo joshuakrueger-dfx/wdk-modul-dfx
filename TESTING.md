@@ -224,13 +224,44 @@ a fixed message is byte-for-byte identical before and after deployment, and it r
 sandbox, `quoteBuy`, `buy()` and `sell()` work with the deployed account, and both sessions belong to the owner address
 (`activeAddress` in `/v2/user` and the JWT `address` claim). A smart-account `recipient` is rejected. 13/13 steps.
 
+## 9. Real purchase with real money (production, 2026-09-28)
+
+A real buy was made from the wallet simulator running against **production**
+(`WALLET_SIM_ENV=production`, see [`e2e/README.md`](e2e/README.md)). The simulator loaded a wallet prepared by
+`e2e/real-purchase.mjs`: a fresh seed, stored `0600` on the test machine and never printed.
+
+The user flow in the wallet: *Kaufen* → ETH on Arbitrum, 20.00 EUR → *Weiter zu DFX*. The DFX widget opened in the
+wallet's in-app browser, already signed in. The e-mail link then linked the new address to an existing verified DFX
+account, and the SEPA transfer was made by hand. The order was placed for **ETH**; USDC had been planned.
+
+Recorded from the wallet's side by polling the module (`getTransactionDetail` by `externalTransactionId`) and the
+on-chain balance every 60 s:
+
+| Time (UTC) | Order status via the module | Arbitrum balance |
+| --- | --- | --- |
+| 08:08:00 | order created (`wallet-1790582879930-f2fca7e950a9`) | 0 ETH |
+| 08:09:15 | `NoSuchElementError` (no DFX transaction yet) | 0 ETH |
+| 08:42:31 | `in_progress` | 0 ETH |
+| 08:43:32 | `completed` | **0.00717295 ETH** |
+
+- **Wallet:** `0x463e558CC8842078CD1FeC6dF1Ff7F54058BE6C7`. Its derivation path `m/44'/60'/0'/0/0` gives the same
+  address in MetaMask (checked by deriving it with `ethers`).
+- **Payout:** [`0x081eb861f4f9d2d34f29b2f1bf3595c415ce3603f9be734cb576c7bd9dca5902`](https://arbiscan.io/tx/0x081eb861f4f9d2d34f29b2f1bf3595c415ce3603f9be734cb576c7bd9dca5902),
+  08:42:37 UTC, 0.00717295 ETH from `0xFAEefD557ffD2714f16e1A44A165FCd5d6a6b6a0`, status ok (Blockscout).
+- **Second order:** an earlier order from the same wallet (08:05:56) received no payment and correctly stays without
+  a transaction (`NoSuchElementError`).
+- **Screenshots:** the wallet's order list and portfolio after completion are in
+  [`e2e/evidence/`](e2e/evidence/).
+
+This is the first run in which every step between wallet and payout was real: sign-in, widget, account linking,
+bank transfer, DFX processing, on-chain payout and status reporting through the module.
+
 ## Not covered
 
 - **Identification itself (Sumsub) and the external name check.** Both are external providers. The UI flow stops at
-  the identification call, and the lifecycle test simulates a completed identification.
-- **Payout and bank transmission.** Real crypto payout, SEPA payout and the pricing/liquidity jobs that precede them
-  talk to chains, banks and exchanges. The real pipeline therefore ends at `LiquidityPending` (buy) and `Processing`
-  (sell). `completed` is covered only with directly set completion fields (section 4).
-- **Deposit detection on a real chain.** The sale starts from a deposit row as the blockchain scan would write it; the
-  scan itself is not exercised.
-- **Real money.** No real transaction was executed in any environment.
+  the identification call, and the lifecycle test simulates a completed identification. In the real purchase
+  (section 9) the account was already verified.
+- **Real sell.** Only a real buy was made (section 9). Selling with real crypto was not tested.
+- **USDC with real money.** The real purchase was ETH. USDC is covered by quotes and widget tests only.
+- **Deposit detection on a real chain.** The sale in the local tests starts from a deposit row as the blockchain scan
+  would write it; the scan itself is not exercised.

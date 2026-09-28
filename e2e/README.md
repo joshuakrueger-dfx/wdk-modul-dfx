@@ -48,7 +48,9 @@ in sandbox and, when explicitly selected, production. Production requires
 catalogs and quotes, using the same environment selection. Wallet journeys always
 use sandbox and can create sandbox users. The widget check opens authenticated
 URLs and may create requests in the environment those URLs target. Use only
-throwaway wallets, never funded wallets or real recovery phrases in the simulator.
+throwaway wallets for probes and sandbox exploration. For a deliberate real purchase
+in the simulator, use a separate prepared wallet as described below; do not enter
+the recovery phrase of a primary wallet in the browser.
 
 Generated JSON, screenshots and the logs in the commands below go under `out/`,
 which is ignored by Git. Seeds are never logged. Session values are masked in
@@ -132,8 +134,58 @@ node wallet-journeys.mjs eth-4337-buy-usdt > out/wallet-journey-4337.log 2>&1
 ```
 
 The simulator consists of `wallet-sim/server.mjs` and `wallet-sim/public/`.
-For manual sandbox exploration only, run `node wallet-sim/server.mjs` and open
+For manual sandbox exploration, run `node wallet-sim/server.mjs` and open
 `http://127.0.0.1:4748`; stop that server before running automated journeys.
+
+#### Simulator: real purchase in production
+
+Production uses **real DFX accounts and real money**. From `e2e/`, start with the
+prepared seed file already present on the machine:
+
+```sh
+WALLET_SIM_ENV=production \
+WALLET_SIM_SEED_FILE="$HOME/.wdk-dfx-real/seed.txt" \
+WALLET_SIM_ORDERS_FILE="$HOME/.wdk-dfx-real/orders-production.json" \
+node wallet-sim/server.mjs
+```
+
+Open `http://127.0.0.1:4748`, verify the orange **PRODUCTION** badge and select
+“Vorbereitete Wallet laden”. Choose Kaufen → USDC · Arbitrum → EUR → Angebot →
+“Weiter zu DFX”. DFX opens inside the wallet at `app.dfx.swiss`; complete the DFX
+steps to obtain payment details. The browser bar displays only the hostname
+derived from the checkout URL. Sandbox uses `dev.app.dfx.swiss`.
+
+`WALLET_SIM_ENV` defaults to `sandbox` and rejects other values. `PORT` still
+defaults to 4748; the server binds only to `127.0.0.1`. The seed file must be a
+nonempty regular file with permissions `0600` (no group/other permissions or
+symlinks). It is checked at startup and again when loaded. Its contents stay on
+the server and are never returned to the browser or logged. A newly generated
+wallet has no exported recovery phrase; use the prepared wallet for a purchase
+that must remain accessible after restart.
+
+The portfolio fetches native balances only for chains with public RPCs in
+`CASES`, plus configured tokens (currently Arbitrum USDC at
+`0xaf88d065e77c8cC2239327C5EDb3A432268e5831`, 6 decimals). Values are formatted
+directly from bigint base units. “Aktualisieren” refreshes them manually;
+production also refreshes every 30 seconds while the page is open. Failed or
+unavailable reads display “–”; Bitcoin and Spark have no configured public RPC
+and are not queried. Native balances follow the configured chain RPCs even in
+DFX sandbox mode. Smart-account balances belong to the displayed smart-account
+address, while DFX purchases use its owner address as noted in the simulator.
+
+If `WALLET_SIM_ORDERS_FILE` is set, its parent directory must already exist.
+Orders are saved atomically with permissions `0600` and loaded at startup. Only
+order metadata is persisted (ID, direction, asset, chain/network, amount and unit,
+time, environment and wallet address); session URLs are never stored. The list
+is filtered to the active environment and wallet accounts. Reopen the same wallet
+after restarting, then use “Meine Aufträge” and select an order to fetch its
+current DFX status. Without this variable, orders remain in memory only. Do not
+run multiple simulator processes against the same orders file.
+
+After payment and payout, return to the portfolio to see the received USDC.
+The simulator does not send funds, transfer tokens or approve spending. Production
+iframe embedding and a real payment must be verified in the actual browser;
+sandbox observations alone do not establish production embedding support.
 
 ### Local full stack
 
