@@ -156,8 +156,10 @@ validate inputs, resolve the pair for the direction, authenticate freshly and
 build the widget URL. A prior quote can surface limits before opening the widget;
 only confirmation in the widget is binding. `recipient` and `refundAddress`
 default to the authentication address: the signing owner EOA for ERC-4337,
-otherwise the account address. Explicit overrides must match that resolved address;
-the check happens after authentication, without an extra signing round for validation.
+otherwise the account address. Explicit overrides must match that resolved address.
+For non-EVM networks and cached EVM signers, the check happens before authentication,
+without a signature or authentication request. For uncached EVM signers, it happens
+after authentication, without an extra signing round for validation.
 If both addresses match `0x` followed by exactly
 40 hexadecimal digits, comparison ignores letter case to accept EVM checksum
 spelling. All other addresses must match exactly.
@@ -259,8 +261,16 @@ do not reuse it for another opening. Receiving a widget URL does not establish a
 
 ## Errors
 
-Error classes are the WDK classes from `@tetherto/wdk-wallet/protocols`;
-`ProviderErrorReason` comes from `@tetherto/wdk-wallet`.
+Error classes and `ProviderErrorReason` are re-exported from this module with
+the same identity as the WDK classes used internally:
+
+```js
+import {
+  AccountRequiredError, ValueError, ProviderError, ProviderRequiredError,
+  BuyError, SellError, MaximumFeeExceededError, NoSuchElementError,
+  ProviderErrorReason
+} from '@dfx.swiss/wdk-protocol-fiat-dfx'
+```
 
 | Class | Use |
 | --- | --- |
@@ -334,14 +344,24 @@ same fallback.
   signing-owner authentication, as in DFX's own `dfx-wallet`.
   **DFX delivers purchases to the owner EOA, not to the Safe/smart account. The
   owner belongs to the same key, but purchased funds are outside the smart account.**
+  On ERC-4337 chains, the owner EOA typically has no gas and is usually not shown
+  in wallet apps. Purchased tokens remain under the owner's control, but cannot
+  be moved without gas. Integrators should display this address and plan for gas.
   Explicit Safe `recipient` or `refundAddress` overrides throw `ValueError`.
+  `getTransactionDetail` also requires the constructor `network` for ERC-4337
+  accounts; without it, authentication uses the smart-account address and fails.
   On the first EVM login, the module recovers the EIP-191 signer from the account's
   signature; if it differs, it requests and signs a new challenge for the owner.
-  The instance caches the owner per account address, so later logins need one
+  After successful authentication with a valid access token, the instance caches
+  the owner per account address, so later logins need one
   signature. EOA accounts need only one signature from the start. Recovery is
   limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
   Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet
-  (case-insensitive). Unrecoverable signature formats pass through for backend validation.
+  (case-insensitive). Accounts whose `sign` does not return an EIP-191 signature
+  from the owner (for example, ERC-1271 formats) are unsupported. Unrecoverable
+  formats are forwarded unchanged with the account address, which does not make
+  them supported. Recoverable signatures over a different digest can resolve to
+  an unrelated address; failed authentication never caches that address.
 - Bitcoin authentication is sandbox-verified. Bitcoin/BTC, Lightning/BTC,
   Arkade/BTC and Firo/FIRO are now tradable using an 8-decimal fallback when the
   API omits `decimals` or supplies null, matching DFX wallets' BTC unit convention

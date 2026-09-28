@@ -61,7 +61,7 @@ function compactDer (hex) {
   return offset === bytes.length ? scalars.join('') : hex
 }
 
-/** Internal format conversion only; never signs or accesses account keys. */
+/** Converts Solana hex signatures to Base58 and Spark DER hex signatures to compact hex, preserving other formats. */
 export function normalizeSignature (network, signature) {
   if (network === 'solana' && /^[0-9a-f]{128}$/i.test(signature)) return base58(signature)
   if (network === 'spark' && /^(?:[0-9a-f]{2}){4,}$/i.test(signature)) return compactDer(signature)

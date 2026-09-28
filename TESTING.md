@@ -20,8 +20,8 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Unit tests + coverage | `npm run lint && npm run test:coverage` | lint output empty; 824/824 tests; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 36/36 mutations detected, each by 1–60 targeted tests |
+| Unit tests + coverage | `npm run lint && npm run test:coverage` | lint output empty; 837/837 tests; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 43/43 mutations detected, each by 1–60 targeted tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -33,12 +33,13 @@ unless it says so.
 | Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | buy and sell reach an automatic AML `Pass`; rejection and refund reach `Returned`; the module status matches every DFX state observed |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
 | Deployed ERC-4337 account | `cd e2e && node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
+| Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): code, JSDoc and declaration findings fixed; test-convention findings open |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
 
 ## 1. Unit tests
 
-`npm run lint && npm run test:coverage` (Node 22.22.0): `standard` prints nothing; Jest runs 2 suites, 824 tests, all
+`npm run lint && npm run test:coverage` (Node 22.22.0): `standard` prints nothing; Jest runs 2 suites, 837 tests, all
 passing, at 100 % coverage in all four categories. Tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
 transaction state, the account-error allowlist per method, signature normalisation (Solana, Spark), EIP-191 owner
@@ -47,7 +48,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit suite was run in band, and the source was restored. All 36 were detected.
+pattern matched exactly once), the unit suite was run in band, and the source was restored. All 43 were detected.
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -55,7 +56,12 @@ address compared case-sensitively; always `amount-in`; account-error allowlist v
 wrong receiver; `blockchain` omitted at sign-in; lossy JSON numbers; external-ID character set opened; Solana signature
 not Base58-encoded; leading zero bytes dropped in Base58; Spark DER kept; DER scalars not left-padded; ERC-4337 owner
 not used for sign-in; signer cache disabled; wrong EIP-191 prefix; native decimals fallback removed or given priority
-over API decimals.
+over API decimals; signer cached before a successful sign-in; early address check disabled; an uncached EVM account
+treated as known; EIP-191 length counted in UTF-16 units instead of bytes; `null` asset description passed through;
+an error class no longer re-exported.
+
+EIP-191 recovery is additionally pinned to a reference value produced by ethers `Wallet.signMessage` (private key 2,
+UTF-8 message with multi-byte characters), so a mistake shared by the module and the test helper cannot stay green.
 
 The probe script is a local tool and is not part of this repository.
 
@@ -256,6 +262,34 @@ on-chain balance every 60 s:
 This is the first run in which every step between wallet and payout was real: sign-in, widget, account linking,
 bank transfer, DFX processing, on-chain payout and status reporting through the module.
 
+## 10. Reviews (2026-09-28)
+
+**Independent code review** of the native-decimals fallback and the ERC-4337 owner sign-in. Two defects were
+confirmed and fixed:
+
+- The recovered owner was cached before the sign-in succeeded. A signature that recovers to an unrelated address
+  (for example an ERC-1271 format) left the instance unable to sign in. The owner is now cached only after DFX returns
+  an access token.
+- On Tron, Solana, Bitcoin and cached EVM accounts, a mismatching `recipient`/`refundAddress` was rejected only after
+  a signature and a sign-in request, which creates a DFX user. It is now rejected before either.
+
+Documented instead of changed: purchases for ERC-4337 accounts go to the owner EOA, which usually has no gas and is
+not shown in wallet apps (as in DFX's own wallet); `getTransactionDetail` for ERC-4337 accounts needs the constructor
+`network`; ERC-1271 signature formats are not supported. Not changed: two parallel first sign-ins on one instance
+request two signatures each.
+
+**Tether's review skills** (`tetherto/wdk-agent-skills` at `219077f`):
+
+- `wdk-review-jsdocs`: 33 findings under 9 of 35 rules (R8, R9, R17, R23, R25, R26, R28, R31, R32). All fixed:
+  parent descriptions kept, one `@throws` per condition, named typedefs instead of inline objects, `quoteBuy`/`quoteSell`
+  typed without `recipient`/`refundAddress` as in the parent, `null` description returned as `undefined`.
+- `wdk-review-dts`: 2 findings (TD1/TD9 text drift between JSDoc and `.d.ts`; TD4 error classes not re-exported). Both
+  fixed; the error classes, `ProviderErrorReason` and the account types are now exported from this module. The
+  declarations were type-checked with `tsc --strict` together with a consumer file, including a check that
+  `recipient` is rejected in quote options.
+- `wdk-review-tests`: 7 of 11 rules reported (R1–R6, R11) plus conventions (dummy classes instead of mock factories,
+  `DUMMY_` naming, one top-level `describe` per module). Not yet applied; see below.
+
 ## Not covered
 
 - **Identification itself (Sumsub) and the external name check.** Both are external providers. The UI flow stops at
@@ -265,3 +299,7 @@ bank transfer, DFX processing, on-chain payout and status reporting through the 
 - **USDC with real money.** The real purchase was ETH. USDC is covered by quotes and widget tests only.
 - **Deposit detection on a real chain.** The sale in the local tests starts from a deposit row as the blockchain scan
   would write it; the scan itself is not exercised.
+- **Test conventions of `wdk-review-tests`.** The unit tests have not been restructured to the skill: `signature.test.js`
+  tests an internal module (R4); many tests do not assert the routes called or every returned field (R2, R6); 87 tests
+  cover inputs the parameter types exclude (R11). Removing those, as R11 asks, also leaves the matching runtime checks
+  untested; whether to keep those checks is open.

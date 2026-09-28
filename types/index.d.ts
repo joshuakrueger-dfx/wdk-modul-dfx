@@ -17,4 +17,10 @@ export type SupportedFiatCurrency = import("@tetherto/wdk-wallet/protocols").Sup
 export type SupportedCountry = import("@tetherto/wdk-wallet/protocols").SupportedCountry;
 
 export { IFiatProtocol } from "@tetherto/wdk-wallet/protocols";
-export type { DfxProtocolConfig, DfxTradeConfig, DfxBuyOptions, DfxSellOptions } from "./src/dfx-protocol.js";
+export type { DfxProtocolConfig, DfxTradeConfig, DfxTradeOptions, DfxQuoteConfig, DfxQuoteOptions, DfxBuyOptions, DfxSellOptions, DfxBuyQuoteOptions, DfxSellQuoteOptions } from "./src/dfx-protocol.js";
+export {
+    AccountRequiredError, ValueError, ProviderError, ProviderRequiredError,
+    BuyError, SellError, MaximumFeeExceededError, NoSuchElementError
+} from "@tetherto/wdk-wallet/protocols";
+export { ProviderErrorReason } from "@tetherto/wdk-wallet";
+export type { IWalletAccount, IWalletAccountReadOnly } from "@tetherto/wdk-wallet";

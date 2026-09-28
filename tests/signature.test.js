@@ -6,6 +6,14 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { normalizeSignature, recoverEvmAddress } from '../src/signature.js'
 
+// Independent ethers Wallet.signMessage vector, public private-key scalar 2.
+const ETHERS_MESSAGE = 'By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address. Grüße ✓ 0xabc'
+const ETHERS_SIGNATURE = '0x97ef3091c721f0afe35f3211adf256f2ce0231a7f7efebee90bce4ce43ffe0c84ca2dba2bb88d3e89b561d9b4c9d79a929e2d896cdbc65f5e1556dbd9ef20ae21c'
+
+test('recovers the ethers EIP-191 UTF-8 reference signer', () => {
+  expect(recoverEvmAddress(ETHERS_MESSAGE, ETHERS_SIGNATURE)).toBe('0x2b5ad5c4795c026514f8317c7a215e218dccd6cf')
+})
+
 test.each([0, 27].flatMap(offset => [false, true].flatMap(highS => ['', '0x', '0X'].map(prefix =>
   [offset, highS, prefix]
 ))))('recovers real personal-sign bytes with v offset %s, high-s %s and prefix %s', (offset, highS, prefix) => {

@@ -29,7 +29,7 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * @typedef {Object} DfxProtocolConfig
  * @property {'production' | 'sandbox'} [environment] - API and app environment. Defaults to production.
  * @property {string} [wallet] - Partner identifier supplied by the integrating wallet developer. No default.
- * @property {string} [network] - Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default.
+ * @property {string} [network] - Non-empty DFX blockchain name binding the account to its chain, case-insensitively. No default. Required for buy and sell.
  * @property {string} [publicKey] - Public key sent as key during authentication. No default.
  * @property {string} [language] - Widget language code. Defaults to en.
  * @property {typeof fetch} [fetch] - HTTP implementation called with globalThis as receiver. Defaults to globalThis.fetch.
@@ -40,24 +40,35 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * Per-operation network selection and wallet transaction identifier.
  *
  * @typedef {Object} DfxTradeConfig
- * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network.
+ * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. Selectable for quotes; must match the constructor network for buy and sell.
  * @property {string} [externalTransactionId] - Wallet-assigned ID, unique per widget opening; 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
  */
 
 /**
- * Purchase options with case-insensitive tickers/network and EVM checksum address equivalence.
- * recipient must match the authentication address. ERC-4337 purchases go to the
- * signing owner EOA outside the smart account; explicit Safe recipients are rejected.
+ * Per-operation trade configuration.
  *
- * @typedef {BuyOptions & { config?: DfxTradeConfig }} DfxBuyOptions
+ * @typedef {Object} DfxTradeOptions
+ * @property {DfxTradeConfig} [config] - Trade configuration.
  */
 
 /**
- * Sale options with case-insensitive tickers/network and EVM checksum address equivalence.
- * refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
+ * Per-quote network selection.
  *
- * @typedef {SellOptions & { config?: DfxTradeConfig }} DfxSellOptions
+ * @typedef {Object} DfxQuoteConfig
+ * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network.
  */
+
+/**
+ * Per-operation quote configuration.
+ *
+ * @typedef {Object} DfxQuoteOptions
+ * @property {DfxQuoteConfig} [config] - Quote configuration.
+ */
+
+/** @typedef {BuyOptions & DfxTradeOptions} DfxBuyOptions */
+/** @typedef {SellOptions & DfxTradeOptions} DfxSellOptions */
+/** @typedef {Omit<BuyOptions, 'recipient'> & DfxQuoteOptions} DfxBuyQuoteOptions */
+/** @typedef {Omit<SellOptions, 'refundAddress'> & DfxQuoteOptions} DfxSellQuoteOptions */
 
 const ACCOUNT_ERRORS = {
   buy: [AccountRequiredError, ValueError, ProviderRequiredError, ProviderError, BuyError, MaximumFeeExceededError],
@@ -151,8 +162,6 @@ function transactionCode (rows, kind, id, name, blockchain) {
 
 /**
  * Provides DFX fiat quotes, widget URLs and transaction status.
- *
- * @extends FiatProtocol
  */
 export default class DfxProtocol extends FiatProtocol {
   /** @private */
@@ -162,28 +171,52 @@ export default class DfxProtocol extends FiatProtocol {
   #signers = new Map()
 
   /**
+   * Creates a new interface to the protocol without binding it to a wallet account.
    * Creates an account-free DFX interface for quotes and supported lists.
    *
    * @overload
-   * @param {undefined} [account] - Omit for public API access.
+   * @param {undefined} [account] - Omit for public API access. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
-   * @throws {ValueError} If configuration is not an object, the environment is unknown, or an option is invalid.
+   * @throws {ValueError} If config is not an object.
+   * @throws {ValueError} If environment is unknown.
+   * @throws {ValueError} If timeout is not a finite positive number.
+   * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
+   * @throws {ValueError} If network is supplied but is not a non-empty string.
+   * @throws {ValueError} If wallet is supplied but is not a non-empty string.
+   * @throws {ValueError} If publicKey is supplied but is not a non-empty string.
+   * @throws {ValueError} If language is supplied but is not a non-empty string.
    */
   /**
+   * Creates a new read-only interface to the protocol.
    * Creates a DFX interface with a read-only wallet account.
    *
    * @overload
-   * @param {IWalletAccountReadOnly} account - Account available to the protocol.
+   * @param {IWalletAccountReadOnly} account - Account available to the protocol. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
-   * @throws {ValueError} If configuration is not an object, the environment is unknown, or an option is invalid.
+   * @throws {ValueError} If config is not an object.
+   * @throws {ValueError} If environment is unknown.
+   * @throws {ValueError} If timeout is not a finite positive number.
+   * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
+   * @throws {ValueError} If network is supplied but is not a non-empty string.
+   * @throws {ValueError} If wallet is supplied but is not a non-empty string.
+   * @throws {ValueError} If publicKey is supplied but is not a non-empty string.
+   * @throws {ValueError} If language is supplied but is not a non-empty string.
    */
   /**
+   * Creates a new interface to the protocol.
    * Creates a DFX interface with a signing wallet account.
    *
    * @overload
-   * @param {IWalletAccount} account - Account used to sign DFX authentication messages.
+   * @param {IWalletAccount} account - Account used to sign DFX authentication messages. Without sign, only quotes and lists are available; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
    * @param {DfxProtocolConfig} [config] - API and widget configuration.
-   * @throws {ValueError} If configuration is not an object, the environment is unknown, or an option is invalid.
+   * @throws {ValueError} If config is not an object.
+   * @throws {ValueError} If environment is unknown.
+   * @throws {ValueError} If timeout is not a finite positive number.
+   * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
+   * @throws {ValueError} If network is supplied but is not a non-empty string.
+   * @throws {ValueError} If wallet is supplied but is not a non-empty string.
+   * @throws {ValueError} If publicKey is supplied but is not a non-empty string.
+   * @throws {ValueError} If language is supplied but is not a non-empty string.
    */
   constructor (account, config = {}) {
     super(account)
@@ -206,19 +239,36 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /**
+   * Generates a URL for a user to purchase a crypto asset with fiat currency.
    * Generates a fresh authenticated purchase widget URL.
+   * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
+   * ERC-4337 purchases go to the signing owner EOA outside the smart account.
+   * Known authentication addresses are checked before login; uncached EVM addresses after login.
    * Account errors pass through only for the exact constructors listed below;
    * subclasses and other account failures become ProviderError with the original cause.
    *
-   * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units.
+   * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
    * @returns {Promise<BuyResult>} The purchase widget URL.
    * @throws {AccountRequiredError} If a signing account is unavailable.
-   * @throws {ValueError} If options is not an object or the asset or currency is unsupported for buying.
-   * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
-   * @throws {ValueError} If the network is missing or differs from the account network.
-   * @throws {ValueError} If recipient differs from the authentication address (the signing owner for ERC-4337).
+   * @throws {ValueError} If options is not an object.
+   * @throws {ValueError} If options.config is not an object.
+   * @throws {ValueError} If the asset or network is unsupported for buying.
+   * @throws {ValueError} If the asset spelling is ambiguous on a network.
+   * @throws {ValueError} If the asset is ambiguous across networks.
+   * @throws {ValueError} If asset decimals are missing.
+   * @throws {ValueError} If the fiat currency is ambiguous.
+   * @throws {ValueError} If the fiat currency is unsupported for buying.
+   * @throws {ValueError} If exactly one amount is not supplied.
+   * @throws {ValueError} If the amount is invalid.
+   * @throws {ValueError} If the amount exceeds accepted precision.
+   * @throws {ValueError} If the per-operation network is not a non-empty string.
+   * @throws {ValueError} If the constructor network is missing.
+   * @throws {ValueError} If the network differs from the account network.
+   * @throws {ValueError} If recipient differs from the authentication address. Explicit Safe recipients are rejected.
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
-   * @throws {ProviderError} If authentication or the API request fails.
+   * @throws {ProviderError} If authentication fails.
+   * @throws {ProviderError} If the API request fails.
+   * @throws {ProviderError} If the API returns malformed data.
    * @throws {ProviderRequiredError} If the account requires a provider.
    * @throws {BuyError} If the account reports a purchase failure.
    * @throws {MaximumFeeExceededError} If the account reports an excessive fee.
@@ -228,31 +278,61 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /**
+   * Gets a quote for a crypto asset purchase.
    * Quotes an indicative purchase without a signature or reservation.
    *
-   * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units.
+   * @param {DfxBuyQuoteOptions} options - Purchase asset, currency and one amount in smallest units; optional config.network selects the network.
    * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
-   * @throws {ValueError} If options is not an object or the pair, network or amount is invalid.
-   * @throws {ProviderError} If the API fails or returns malformed quote data.
+   * @throws {ValueError} If options is not an object.
+   * @throws {ValueError} If options.config is not an object.
+   * @throws {ValueError} If the asset or network is unsupported for buying.
+   * @throws {ValueError} If the asset spelling is ambiguous on a network.
+   * @throws {ValueError} If the asset is ambiguous across networks.
+   * @throws {ValueError} If asset decimals are missing.
+   * @throws {ValueError} If the fiat currency is ambiguous.
+   * @throws {ValueError} If the fiat currency is unsupported for buying.
+   * @throws {ValueError} If exactly one amount is not supplied.
+   * @throws {ValueError} If the amount is invalid.
+   * @throws {ValueError} If the amount exceeds accepted precision.
+   * @throws {ValueError} If the per-operation network is not a non-empty string.
+   * @throws {ValueError} If DFX rejects quote input.
+   * @throws {ProviderError} If the API fails.
+   * @throws {ProviderError} If the API returns malformed quote data.
    */
   async quoteBuy (options) {
     return this._quote('buy', options)
   }
 
   /**
+   * Generates a URL for a user to sell a crypto asset for fiat currency.
    * Generates a fresh authenticated sale widget URL.
+   * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
+   * Known authentication addresses are checked before login; uncached EVM addresses after login.
    * Account errors pass through only for the exact constructors listed below;
    * subclasses and other account failures become ProviderError with the original cause.
    *
-   * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units.
+   * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
    * @returns {Promise<SellResult>} The sale widget URL.
    * @throws {AccountRequiredError} If a signing account is unavailable.
-   * @throws {ValueError} If options is not an object or the asset or currency is unsupported for selling.
-   * @throws {ValueError} If the amount is invalid or exceeds accepted precision.
-   * @throws {ValueError} If the network is missing or differs from the account network.
-   * @throws {ValueError} If refundAddress differs from the authentication address (the signing owner for ERC-4337).
+   * @throws {ValueError} If options is not an object.
+   * @throws {ValueError} If options.config is not an object.
+   * @throws {ValueError} If the asset or network is unsupported for selling.
+   * @throws {ValueError} If the asset spelling is ambiguous on a network.
+   * @throws {ValueError} If the asset is ambiguous across networks.
+   * @throws {ValueError} If asset decimals are missing.
+   * @throws {ValueError} If the fiat currency is ambiguous.
+   * @throws {ValueError} If the fiat currency is unsupported for selling.
+   * @throws {ValueError} If exactly one amount is not supplied.
+   * @throws {ValueError} If the amount is invalid.
+   * @throws {ValueError} If the amount exceeds accepted precision.
+   * @throws {ValueError} If the per-operation network is not a non-empty string.
+   * @throws {ValueError} If the constructor network is missing.
+   * @throws {ValueError} If the network differs from the account network.
+   * @throws {ValueError} If refundAddress differs from the authentication address. Explicit Safe refund addresses are rejected.
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
-   * @throws {ProviderError} If authentication or the API request fails.
+   * @throws {ProviderError} If authentication fails.
+   * @throws {ProviderError} If the API request fails.
+   * @throws {ProviderError} If the API returns malformed data.
    * @throws {ProviderRequiredError} If the account requires a provider.
    * @throws {SellError} If the account reports a sale failure.
    * @throws {MaximumFeeExceededError} If the account reports an excessive fee.
@@ -262,30 +342,55 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /**
+   * Gets a quote for a crypto asset sale.
    * Quotes an indicative sale without a signature or reservation.
    *
-   * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units.
+   * @param {DfxSellQuoteOptions} options - Sale asset, currency and one amount in smallest units; optional config.network selects the network.
    * @returns {Promise<FiatQuote>} Amounts and fees in smallest units; rate from response fiat/crypto display amounts including fees, rounded half up to 18 significant digits without exponent notation.
-   * @throws {ValueError} If options is not an object or the pair, network or amount is invalid.
-   * @throws {ProviderError} If the API fails or returns malformed quote data.
+   * @throws {ValueError} If options is not an object.
+   * @throws {ValueError} If options.config is not an object.
+   * @throws {ValueError} If the asset or network is unsupported for selling.
+   * @throws {ValueError} If the asset spelling is ambiguous on a network.
+   * @throws {ValueError} If the asset is ambiguous across networks.
+   * @throws {ValueError} If asset decimals are missing.
+   * @throws {ValueError} If the fiat currency is ambiguous.
+   * @throws {ValueError} If the fiat currency is unsupported for selling.
+   * @throws {ValueError} If exactly one amount is not supplied.
+   * @throws {ValueError} If the amount is invalid.
+   * @throws {ValueError} If the amount exceeds accepted precision.
+   * @throws {ValueError} If the per-operation network is not a non-empty string.
+   * @throws {ValueError} If DFX rejects quote input.
+   * @throws {ProviderError} If the API fails.
+   * @throws {ProviderError} If the API returns malformed quote data.
    */
   async quoteSell (options) {
     return this._quote('sell', options)
   }
 
   /**
+   * Retrieves the details of a specific transaction from the provider.
    * Retrieves a fiat transaction by UID or external ID, renewing an expired session once.
    * Resolves inactive catalog rows too, validating only the matched rows.
    * Only exact ProviderRequiredError and ProviderError account errors pass through;
    * all other account failures become ProviderError with the original cause.
    *
    * @param {string} txId - DFX transaction UID or wallet-assigned external transaction ID.
-   * @param {{ idType?: 'uid' | 'externalTransactionId' }} [options] - Identifier type; defaults to uid.
+   * @param {Object} [options] - Transaction lookup options.
+   * @param {'uid' | 'externalTransactionId'} [options.idType] - Identifier type; defaults to uid.
    * @returns {Promise<FiatTransactionDetail>} Normalized transaction status and asset codes.
-   * @throws {ValueError} If the identifier or options are invalid, or the identifier is rejected by DFX.
-   * @throws {NoSuchElementError} Until DFX has registered a transaction for this id, or for a Swap or Referral.
+   * @throws {ValueError} If options is not an object.
+   * @throws {ValueError} If idType is not uid or externalTransactionId.
+   * @throws {ValueError} If the UID is not a non-empty string.
+   * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
+   * @throws {ValueError} If the identifier is rejected by DFX.
+   * @throws {NoSuchElementError} Until DFX has registered a transaction for this id.
+   * @throws {NoSuchElementError} If the transaction is a Swap.
+   * @throws {NoSuchElementError} If the transaction is a Referral.
    * @throws {ProviderRequiredError} If the signing account requires a provider.
-   * @throws {ProviderError} If authentication fails or the response cannot be resolved.
+   * @throws {ProviderError} If a signing account is unavailable.
+   * @throws {ProviderError} If authentication fails.
+   * @throws {ProviderError} If the API request fails.
+   * @throws {ProviderError} If the response cannot be resolved.
    */
   async getTransactionDetail (txId, options = {}) {
     optionsObject(options, 'options')
@@ -319,11 +424,13 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /**
+   * Retrieves a list of supported crypto assets from the provider.
    * Lists assets available for buying or selling with known decimals.
-   * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO default to 8 when API decimals are absent.
+   * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO default to 8 when API decimals are absent or null.
    *
    * @returns {Promise<SupportedCryptoAsset[]>} Tickers, lowercase blockchain names and base-unit decimals.
-   * @throws {ProviderError} If the API fails or returns malformed asset metadata.
+   * @throws {ProviderError} If the API fails.
+   * @throws {ProviderError} If the API returns malformed asset metadata.
    */
   async getSupportedCryptoAssets () {
     const assets = await this._catalog('asset')
@@ -331,15 +438,17 @@ export default class DfxProtocol extends FiatProtocol {
       code: asset.name,
       networkCode: asset.blockchain.toLowerCase(),
       decimals: assetDecimals(asset),
-      name: asset.description
+      name: asset.description ?? undefined
     }))
   }
 
   /**
+   * Retrieves a list of supported fiat currencies from the provider.
    * Lists fiat currencies available in either direction with known ISO minor units.
    *
    * @returns {Promise<SupportedFiatCurrency[]>} ISO currency codes and minor-unit decimals.
-   * @throws {ProviderError} If the API fails or returns malformed currency metadata.
+   * @throws {ProviderError} If the API fails.
+   * @throws {ProviderError} If the API returns malformed currency metadata.
    */
   async getSupportedFiatCurrencies () {
     const currencies = await this._catalog('fiat')
@@ -348,10 +457,12 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /**
+   * Retrieves a list of supported countries or regions from the provider.
    * Lists countries with bank-transfer availability for both trade directions.
    *
    * @returns {Promise<SupportedCountry[]>} Country codes, names and bank availability flags.
-   * @throws {ProviderError} If the API fails or returns malformed country metadata.
+   * @throws {ProviderError} If the API fails.
+   * @throws {ProviderError} If the API returns malformed country metadata.
    */
   async getSupportedCountries () {
     const countries = await this._client._request('/v1/country')
@@ -384,20 +495,26 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /** @private */
+  #knownAuthAddress (address) {
+    return EVM_BLOCKCHAINS.has(this._config.network) ? this.#signers.get(address.toLowerCase()) : address
+  }
+
+  /** @private */
   async _authenticate (method, address) {
     if (!this._hasAccount()) throw new ProviderError('A signing account is required for transaction details', { reason: ProviderErrorReason.UNAUTHORIZED })
     const accountAddress = address ?? await this._accountCall(method, 'getAddress')
     textField(accountAddress)
     const evm = EVM_BLOCKCHAINS.has(this._config.network)
-    const cacheKey = evm ? accountAddress.toLowerCase() : accountAddress
-    let authAddress = this.#signers.get(cacheKey) ?? accountAddress
+    const knownAddress = this.#knownAuthAddress(accountAddress)
+    let authAddress = knownAddress ?? accountAddress
+    let recovered = false
     const challenge = record(await this._client._request(`/v1/auth/signMessage?${new URLSearchParams({ address: authAddress })}`))
     let signature = await this._accountCall(method, 'sign', textField(challenge.message))
     textField(signature)
-    if (evm && !this.#signers.has(cacheKey)) {
+    if (evm && knownAddress === undefined) {
       const signer = recoverEvmAddress(challenge.message, signature)
       if (signer !== undefined) {
-        this.#signers.set(cacheKey, sameAddress(signer, accountAddress) ? accountAddress : signer)
+        recovered = true
         if (!sameAddress(signer, accountAddress)) {
           authAddress = signer
           const ownerChallenge = record(await this._client._request(`/v1/auth/signMessage?${new URLSearchParams({ address: authAddress })}`))
@@ -415,6 +532,7 @@ export default class DfxProtocol extends FiatProtocol {
     }
     const auth = record(await this._client._request('/v1/auth', { method: 'POST', body: JSON.stringify(body) }))
     this.#token = textField(auth.accessToken)
+    if (recovered) this.#signers.set(accountAddress.toLowerCase(), authAddress)
     return { token: this.#token, address: authAddress }
   }
 
@@ -501,19 +619,27 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /** @private */
-  async _widget (direction, options) {
-    optionsObject(options, 'options')
-    if (!this._hasAccount()) throw new AccountRequiredError('A signing account is required for buy and sell')
-    const { asset, currency, source, amount } = await this._trade(direction, options, true)
-    const address = await this._accountCall(direction, 'getAddress')
-    const field = direction === 'buy' ? 'recipient' : 'refundAddress'
-    const { token, address: authAddress } = await this._authenticate(direction, address)
+  #validateAddress (options, field, address, authAddress) {
     if (options[field] !== undefined && !sameAddress(options[field], authAddress)) {
       if (!sameAddress(authAddress, address)) {
         throw new ValueError(`DFX delivers to the signing owner address ${authAddress} for this account; ${field} must match it and the smart-account address cannot be used as ${field}`)
       }
       throw new ValueError(`${field} must match the account address`)
     }
+  }
+
+  /** @private */
+  async _widget (direction, options) {
+    optionsObject(options, 'options')
+    if (!this._hasAccount()) throw new AccountRequiredError('A signing account is required for buy and sell')
+    const { asset, currency, source, amount } = await this._trade(direction, options, true)
+    const address = await this._accountCall(direction, 'getAddress')
+    textField(address)
+    const field = direction === 'buy' ? 'recipient' : 'refundAddress'
+    const knownAddress = this.#knownAuthAddress(address)
+    if (knownAddress !== undefined) this.#validateAddress(options, field, address, knownAddress)
+    const { token, address: authAddress } = await this._authenticate(direction, address)
+    this.#validateAddress(options, field, address, authAddress)
     const url = new URL(`/${direction}`, this._app)
     url.searchParams.set('session', token)
     url.searchParams.set('lang', this._config.language ?? 'en')

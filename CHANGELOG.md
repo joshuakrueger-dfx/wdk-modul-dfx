@@ -8,6 +8,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Re-export WDK error classes, ProviderErrorReason and wallet account types;
+  provide dedicated network-only quote option types.
 - Optional wallet-assigned `externalTransactionId` for buy/sell widget URLs and
   transaction lookup via `getTransactionDetail(id, { idType: 'externalTransactionId' })`.
 - Order-tracking timing and sandbox account compatibility documentation, including
@@ -24,6 +26,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Cache recovered EVM signers only after successful authentication; reject
+  mismatched known delivery addresses before signing or authentication requests.
+- Normalize null asset descriptions to undefined and align JSDoc with the
+  manually maintained declarations and parent method descriptions.
+- Clarify ERC-4337 owner gas, address visibility, transaction-detail network
+  requirements and unsupported signing formats.
 - Document heuristic payment matching, wallet waiting deadlines, unique IDs per
   widget opening and newest-transaction lookup within a reused widget session.
 - Record successful sandbox authentication with WDK EVM, Tron, Solana, Spark and
