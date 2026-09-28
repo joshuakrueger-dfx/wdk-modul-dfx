@@ -4,9 +4,17 @@ This document records how `@dfx.swiss/wdk-protocol-fiat-dfx` was verified, what 
 does not prove. Every result below was produced by running the named command. Nothing is inferred from reading code
 unless it says so.
 
-- **Date:** 2026-09-24 (sections 1–5), 2026-09-25 (sections 6–8)
-- **Module under test:** this repository, `feat/module` at commit `0be1b6d` (library code). The `e2e/` tooling was added
-  on top without touching `src/`, `types/` or `tests/`.
+- **Which code each result belongs to.** The library logic in `src/` last changed in commit `1474599` (code of conduct
+  C005); the later commits `73d4a8d`, `ec9b788` and `c9b2c90` change tests, JSDoc comments, declarations and exports
+  only. Results therefore fall into two groups:
+  - **Current code (re-run on 2026-09-28 against `ec9b788`, and `c9b2c90` for the unit, integration, coverage and
+    mutation layers):** every row of the summary table except the real purchase. The e2e probes consumed a packed copy
+    of the module whose `src/` and `index.js` were compared byte for byte with the repository before the run.
+  - **Earlier code `0be1b6d`:** the real purchase with real money (section 9, 2026-09-28 morning). It was not repeated
+    after the review changes of rounds 13–16 (sign-in cache after success, early address check, removal of type guards),
+    because repeating it needs new money.
+- **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
+  are those of the 2026-09-28 re-run unless a section says otherwise.
 - **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
 - **WDK packages used by the integration tests:** `@tetherto/wdk` 1.0.0-beta.18, `@tetherto/wdk-wallet` 1.0.0-beta.20,
   `@tetherto/wdk-wallet-evm` 1.0.0-beta.19, `@tetherto/wdk-wallet-evm-erc-4337` 1.0.0-beta.20,
@@ -20,9 +28,10 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, local | `npm run test:integration` | 12/12 tests against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests + coverage | `npm run lint && npm run test:coverage` | lint output empty; 707/707 tests; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 41/41 mutations detected, each by 1–207 tests |
+| Integration, local | `npm run test:integration` | 28/28 tests in 2 suites against a local DFX server replaying recorded sandbox responses; no network |
+| Unit tests | `npm run lint && npm test` | lint output empty; 696/696 tests in 2 suites |
+| Coverage (unit + integration) | `npm run test:coverage` | 724/724 tests in 4 suites; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 41/41 mutations detected across unit and integration suites, each by 1–218 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -40,8 +49,10 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 
 ## 1. Unit tests
 
-`npm run lint && npm run test:coverage` (Node 22.22.0): `standard` prints nothing; Jest runs 2 suites, 707 tests, all
-passing, at 100 % coverage in all four categories. Tests use an injected `fetch` routed by method and URL and cover
+`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs 2 unit suites, 696 tests, all passing;
+`npm run test:coverage` adds the 2 integration suites (724 tests) and reaches 100 % coverage in all four categories. The
+session and signer-cache cases need several public calls and live in the integration suites (skill rule R3). All
+unit tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
 transaction state, the account-error allowlist per method, signature normalisation (Solana, Spark), EIP-191 owner
 recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals fallback.
@@ -49,7 +60,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit suite was run in band, and the source was restored. All 41 were detected. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 41 were detected. For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -296,7 +307,8 @@ request two signatures each.
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
-- Integration tests (`npm run test:integration`, `tests/integration/`): 12/12 against a local DFX server started
+- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 28/28, see section
+  11 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.
   Expected values are fixed literals computed independently from the recorded responses. Checks: 12/12 with all
@@ -308,6 +320,38 @@ request two signatures each.
   sandbox: 172/178, the same six expected failures as in section 2.
 - Test files are excluded from `npm run lint` by the Tether scaffold (`standard.ignore`). They were linted
   separately with the `standard` rules and ignore disabled; output empty.
+- Third pass of all three skills on `ec9b788`:
+  - `wdk-review-jsdocs`: 7 of 39 rules reported (missing typedef descriptions, tautologies, one text for three
+    constructor overloads, implementation prose, missing `@throws` for passed-through account errors).
+  - `wdk-review-dts`: 2 of 9 (declaration order changed without need; `FiatProtocol`, `BuyErrorReason` and
+    `SellErrorReason` not re-exported).
+  - `wdk-review-tests`: 4 of 11 (expected values rebuilding module logic, tests calling several methods, duplicates, a
+    random seed in integration tests).
+
+  All fixed in `c9b2c90`. The session and signer-cache scenarios moved to `tests/integration/auth-sessions.test.js`
+  (real WDK signatures, fixed public test phrase from the skill, server state reset per test). The full catalogs are
+  compared against `tests/integration/fixtures/expected-catalog.json`, computed independently in Python from the
+  recorded responses. A fourth pass on `c9b2c90` has not been run.
+
+## 11. E2E re-run against the current code (2026-09-28)
+
+Every probe under `e2e/` that needs no new money was run again against library code `ec9b788` (module copy compared
+byte for byte with `src/` before the run):
+
+| Probe | Result |
+| --- | --- |
+| `signature-diff.mjs` | 0 mismatches (20 000 Solana, 5 000 Spark) |
+| `native-quotes.mjs`, sandbox and production | Lightning, Arkade and Firo listed and quoted; one expected `AmountTooLow` for the 0.01 FIRO sell |
+| `live-matrix.mjs`, sandbox | 172/178, the same six expected failures as in section 2 |
+| `live-matrix.mjs`, production | 175/179, the same four failures (Sepolia USDT, DFX data) as in section 2 |
+| `widget-check.mjs`, sandbox and production | widget opens signed in with amount, asset and network prefilled |
+| `wallet-journeys.mjs` | 7/7 journeys |
+| `fullstack.mjs` | first run: the local backend answered "No valid price found for CHF → ETH" for the first buy (local price feed, not the module; sign-in and widget URL were green, and a later buy in the same run got payment details); second run: 29/29 |
+| `fullstack-processing.mjs` | sell matching by the real `BuyFiat` job and the +10 % counter-test as in section 6; the two "observe processing for six minutes" steps stay red, because this first probe does not perform the operating steps (bank data approval, IP phone check) that the AML decision needs. Whether they were also red on 2026-09-25 cannot be shown, because that log was not kept. The lifecycle probe covers the AML decision |
+| `fullstack-lifecycle.mjs` (`OBSERVE_MINUTES=15`) | 60 steps OK, 0 failed; buy A reaches automatic AML `Pass`, the rejected buy B goes through `Failed` to `Returned`, the sale reaches AML `Pass`; the module status matched all seven DFX states observed (`Created`, `CheckPending`, `LiquidityPending`, `Processing` → `in_progress`; `Failed`, `Returned` → `failed`; `ReturnPending` → `in_progress`) |
+| `kyc-widget.mjs` | module steps green (sign-in, level 10, level 20, nationality, then quote and widget for the same account); the API log shows the documented boundary: `PUT /v2/kyc` answers 503 after the Sumsub call fails, and the widget loops on *Continue*. The probe's own boundary check stays red because no identification step is created |
+| `safe-deployed.mjs` | 13/13 |
+| Real purchase (section 9) | not repeated; belongs to `0be1b6d` |
 
 ## Not covered
 
