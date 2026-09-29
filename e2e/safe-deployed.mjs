@@ -74,7 +74,7 @@ async function rpc (method, params = []) {
   check(response.ok, `RPC HTTP failure for ${method}: ${response.status}`)
   const body = await response.json()
   if (body.error) {
-    const code = maskRpcText(String(body.error.code))
+    const code = maskRpcText(String(body.error.code)).slice(0, 32)
     const message = maskRpcText(String(body.error.message ?? '')).slice(0, 200)
     throw new ProbeFailure(`RPC rejected ${method}: ${code} ${message}`)
   }
