@@ -61,20 +61,24 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
-- Preserve a concurrently established session when another sign-in fails; use
-  the token returned by each authentication for its transaction-detail request.
+- Share one detail session per instance: parallel detail calls share initial
+  sign-in and renewal, and delayed HTTP 401 responses reuse the current token.
+  `buy` and `sell` still sign in afresh without changing the detail session.
 - Invalidate only the token rejected by a transaction-detail HTTP 401, including
   the single retry. Instances handle parallel calls without discarding a newer
-  session; parallel first sign-ins are not coalesced and each signs independently.
+  session. Each detail call retries at most once, even if multiple token
+  generations have passed while its first response was pending.
+- Use fixed address and signature vectors in integration expectations and check
+  error class, message and reason through the shared assertion helper.
 - Preserve replay registrations when switching authentication faults and return
   HTTP 401 with Invalid credentials for registered addresses, or HTTP 400 with
   Invalid signature for unregistered addresses, for the unauthorized fault.
 - Fail lifecycle simulations when the backend has not reached the required payout
   boundary; validate prepared seed ownership and clarify owner-only file permissions.
 
-- Clear the session token and an account's cached EVM owner when its authentication
+- Clear an account's cached EVM owner when its authentication
   POST fails or returns an invalid access token; recover the signer on the next login
-  without an automatic retry, including the next transaction lookup.
+  without an automatic retry. A failed widget login leaves the detail token intact.
 - Treat empty asset descriptions like null, returning an undefined display name.
 - Authenticate EVM ERC-4337 accounts using the EIP-191 signing owner, as in DFX's
   own wallet, with signature-only Noble recovery and an instance-local owner cache.

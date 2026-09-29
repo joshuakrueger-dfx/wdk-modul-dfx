@@ -6,18 +6,19 @@ unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
   - **The last commit that changes this sentence (2026-09-29):** lint, unit, integration, coverage and mutation layers —
-    the first four rows of the summary table. It includes five small library fixes made after `27dd624`:
-    transaction details use the token returned by their own sign-in; a failed sign-in or a rejected session renewal
-    drops the session token only if no concurrent sign-in has already replaced it; a cached
-    signing owner is dropped when sign-in fails; an empty asset description is treated like a missing one; the check of
-    `recipient`/`refundAddress` before sign-in only runs when the sign-in address is the account address itself
-    (non-EVM or EOA), so a stale cached owner of an ERC-4337 account cannot block its own renewal.
+    the first four rows of the summary table. It includes these library changes made after `27dd624`: one shared
+    transaction-detail session per instance, established by a single sign-in that concurrent `getTransactionDetail`
+    calls share (first sign-in and renewal after HTTP 401); `buy`/`sell` sign in fresh and never touch that session; a
+    401 clears the session only if it is still the rejected token, and a renewed token rejected with 401 is dropped; a
+    cached signing owner is dropped when sign-in fails; an empty asset description is treated like a missing one; the
+    check of `recipient`/`refundAddress` before sign-in only runs when the sign-in address is the account address
+    itself (non-EVM or EOA). Integration expectations use address and signature literals computed independently with
+    ethers for the public test phrase; no wallet call computes an expected value.
   - **Library code `ec9b788` (2026-09-28):** the e2e probes of section 11 and the remaining rows of the summary table.
     They consumed a packed copy of the module whose `src/` and `index.js` were compared byte for byte with the
-    repository before the run. The five fixes above are not exercised by those probes and were not re-run there.
+    repository before the run. The changes above are not exercised by those probes and were not re-run there.
   - **Earlier code `0be1b6d`:** the real purchase with real money (section 9, 2026-09-28 morning). It was not repeated
-    after the review changes of rounds 13–16 (sign-in cache after success, early address check, removal of type guards),
-    because repeating it needs new money.
+    after the review changes, because repeating it needs new money.
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
 - **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
@@ -36,9 +37,9 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, local | `npm run test:integration` | 39/39 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests | `npm run lint && npm test` | lint output empty; 700/700 tests in 1 suite |
-| Coverage (unit + integration) | `npm run test:coverage` | 739/739 tests in 2 suites; 100 % statements, branches, functions, lines |
+| Integration, local | `npm run test:integration` | 45/45 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
+| Unit tests | `npm run lint && npm test` | lint output empty; 701/701 tests in 1 suite |
+| Coverage (unit + integration) | `npm run test:coverage` | 746/746 tests in 2 suites; 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 52/52 mutations detected across unit and integration suites, each by 1–609 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
@@ -57,8 +58,8 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 
 ## 1. Unit tests
 
-`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 700 tests, all passing;
-`npm run test:coverage` adds the integration suite (739 tests together) and reaches 100 % coverage in all four categories. The
+`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 701 tests, all passing;
+`npm run test:coverage` adds the integration suite (746 tests together) and reaches 100 % coverage in all four categories. The
 session and signer-cache scenarios that build state across successive public calls live in the integration suite
 (skill rule R3). Parallel calls to the same method within one Act belong in unit tests. All
 unit tests use an injected `fetch` routed by method and URL and cover
@@ -69,7 +70,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 52 were detected. For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 52 were detected. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -296,8 +297,8 @@ confirmed and fixed:
 
 Documented instead of changed: purchases for ERC-4337 accounts go to the owner EOA, which usually has no gas and is
 not shown in wallet apps (as in DFX's own wallet); `getTransactionDetail` for ERC-4337 accounts needs the constructor
-`network`; ERC-1271 signature formats are not supported. Not changed: two parallel first sign-ins on one instance
-request two signatures each.
+`network`; ERC-1271 signature formats are not supported. At that revision, two parallel first sign-ins on one instance
+requested two signatures each. Round 26 changes detail sign-ins to single-flight; it has not been re-run yet.
 
 **Tether's review skills** (`tetherto/wdk-agent-skills` at `219077f`):
 
@@ -316,7 +317,7 @@ request two signatures each.
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
-- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 39/39, see section
+- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 45/45, see section
   11 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.

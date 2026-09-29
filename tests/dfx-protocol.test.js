@@ -1438,25 +1438,40 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     accountCases('getTransactionDetail')
     arrayMessageCases('getTransactionDetail')
 
-    test('uses each concurrent login token for its own transaction-detail request', async () => {
+    test('shares one login and signature between concurrent first detail requests', async () => {
       authMock.mockResolvedValueOnce(response({ accessToken: 'dummy-first-session' }, 201))
-        .mockResolvedValueOnce(response({ accessToken: 'dummy-second-session' }, 201))
+      const EXPECTED_DETAIL = { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' }
+      const EXPECTED_REQUESTS = [
+        CHALLENGE_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-first-session'),
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-first-session'),
+        ...CATALOG_REQUESTS, ...CATALOG_REQUESTS
+      ]
       const { protocol } = setup({}, {
         'POST /v1/auth': authMock
       })
 
       const result = await Promise.all([protocol.getTransactionDetail('123'), protocol.getTransactionDetail('123')])
 
-      expect(result).toEqual([
-        { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' },
-        { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' }
+      expect(result).toEqual([EXPECTED_DETAIL, EXPECTED_DETAIL])
+      expectInteractions(EXPECTED_REQUESTS, [['[dev]_Sign this exact message']], [[]])
+    })
+
+    test('shared detail authentication wraps a buy-only account error for every waiter', async () => {
+      const CAUSE = new BuyError('Signing refused', { reason: 'INSUFFICIENT_FUNDS' })
+      const EXPECTED_REQUESTS = [CHALLENGE_REQUEST]
+      const { protocol } = setup()
+      signMock.mockRejectedValue(CAUSE)
+
+      const errors = await Promise.all([
+        protocol.getTransactionDetail('123').catch(error => error),
+        protocol.getTransactionDetail('123').catch(error => error)
       ])
-      expectInteractions([
-        CHALLENGE_REQUEST, CHALLENGE_REQUEST, AUTH_REQUEST, AUTH_REQUEST,
-        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-first-session'),
-        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-second-session'),
-        ...CATALOG_REQUESTS, ...CATALOG_REQUESTS
-      ], [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
+
+      await failure(Promise.reject(errors[0]), ProviderError, 'DFX account authentication failed', 'UNAUTHORIZED')
+      expect(errors[0].cause).toBe(CAUSE)
+      expect(errors[1]).toBe(errors[0])
+      expectInteractions(EXPECTED_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
 
     test('transaction-detail renewal authenticates the cached owner', async () => {

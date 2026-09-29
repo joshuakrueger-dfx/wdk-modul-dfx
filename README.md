@@ -222,12 +222,14 @@ transactions are outside this fiat interface.
 DFX's flow uses a bank transfer and payment reference. A transaction can remain
 `in_progress` while awaiting the incoming payment; completion time is not guaranteed.
 
-A session token is kept only in private instance memory. Transaction details reuse
-it and renew it once after HTTP 401 when a signing account is available. A second
+A shared detail-session token is kept only in private instance memory. Parallel
+detail calls share one sign-in, including renewal after HTTP 401. A delayed 401
+reuses a newer token when one is already available. Each call retries only once; a second
 401 is returned as `ProviderError` with `UNAUTHORIZED`, and the rejected token is
-discarded if it is still current. Instances preserve newer sessions during parallel
-calls; parallel first sign-ins are not coalesced, so each signs independently.
-Widget calls always obtain a fresh token. Supported lists and quotes need no signature; details do.
+discarded if it is still current. Even a call two token generations behind spends
+its single retry on the current token, which may itself have expired.
+`buy` and `sell` always sign in afresh and leave the detail session untouched,
+including when their sign-in fails. Supported lists and quotes need no signature; details do.
 
 ### Tracking a transaction
 
@@ -359,9 +361,9 @@ same fallback.
   After successful authentication with a valid access token, the instance caches
   the owner per account address, so later logins need one
   signature. A failed authentication POST or invalid access token clears that
-  account's cached owner and the session token; the next login recovers the owner
-  again, without retrying the failed login. A subsequent transaction lookup
-  authenticates again instead of using the previous session. EOA accounts need
+  account's cached owner; the next login recovers the owner
+  again, without retrying the failed login. Widget sign-ins do not change an
+  existing detail session. EOA accounts need
   only one signature from the start. Recovery is
   limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
   Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet

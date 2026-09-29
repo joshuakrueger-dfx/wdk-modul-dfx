@@ -180,6 +180,9 @@ export default class DfxProtocol extends FiatProtocol {
   #token
 
   /** @private */
+  #renewing
+
+  /** @private */
   #signers = new Map()
 
   /**
@@ -363,6 +366,7 @@ export default class DfxProtocol extends FiatProtocol {
   /**
    * Retrieves the details of a specific transaction from the provider.
    * Accepts a UID or external ID and renews an expired session once.
+   * Parallel detail calls share one sign-in per instance, independently of widgets.
    * Only exact ProviderRequiredError and ProviderError account errors pass through;
    * all other account failures become ProviderError with the original cause.
    *
@@ -386,7 +390,7 @@ export default class DfxProtocol extends FiatProtocol {
     const idType = options.idType === undefined ? 'uid' : options.idType
     if (idType === 'externalTransactionId') externalTransactionId(txId)
     else if (txId.trim() === '') throw new ValueError('txId must be a non-empty UID')
-    const token = this.#token || (await this._authenticate('detail')).token
+    const token = await this.#session()
     const path = `/v1/transaction/detail/single?${new URLSearchParams({ [idType === 'uid' ? 'uid' : 'external-id']: txId })}`
     let data
     try {
@@ -394,7 +398,7 @@ export default class DfxProtocol extends FiatProtocol {
     } catch (error) {
       if (!(error instanceof ProviderError) || error.reason !== ProviderErrorReason.UNAUTHORIZED || !this._hasAccount()) throw error
       if (this.#token === token) this.#token = undefined
-      const { token: renewed } = await this._authenticate('detail')
+      const renewed = await this.#session()
       try {
         data = await this._client._request(path, { token: renewed, input: true, detail: true })
       } catch (error) {
@@ -493,8 +497,17 @@ export default class DfxProtocol extends FiatProtocol {
   }
 
   /** @private */
+  async #session () {
+    if (this.#token) return this.#token
+    this.#renewing ??= this._authenticate('detail').then(({ token }) => {
+      this.#token = token
+      return token
+    }).finally(() => { this.#renewing = undefined })
+    return this.#renewing
+  }
+
+  /** @private */
   async _authenticate (method, address) {
-    const previousToken = this.#token
     if (!this._hasAccount()) throw new ProviderError('A signing account is required for transaction details', { reason: ProviderErrorReason.UNAUTHORIZED })
     const accountAddress = address ?? await this._accountCall(method, 'getAddress')
     const evm = EVM_BLOCKCHAINS.has(this._config.network)
@@ -521,16 +534,16 @@ export default class DfxProtocol extends FiatProtocol {
       blockchain: BLOCKCHAINS.find(chain => chain.toLowerCase() === this._config.network),
       key: this._config.publicKey
     }
+    let token
     try {
       const auth = record(await this._client._request('/v1/auth', { method: 'POST', body: JSON.stringify(body) }))
-      this.#token = textField(auth.accessToken)
+      token = textField(auth.accessToken)
     } catch (error) {
-      if (this.#token === previousToken) this.#token = undefined
       if (evm && knownAddress !== undefined) this.#signers.delete(accountAddress.toLowerCase())
       throw error
     }
     if (recovered) this.#signers.set(accountAddress.toLowerCase(), authAddress)
-    return { token: this.#token, address: authAddress }
+    return { token, address: authAddress }
   }
 
   /** @private */

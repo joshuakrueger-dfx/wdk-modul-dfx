@@ -209,6 +209,7 @@ export default class DfxProtocol extends FiatProtocol {
     /**
      * Retrieves the details of a specific transaction from the provider.
      * Accepts a UID or external ID and renews an expired session once.
+     * Parallel detail calls share one sign-in per instance, independently of widgets.
      * Only exact ProviderRequiredError and ProviderError account errors pass through;
      * all other account failures become ProviderError with the original cause.
      *

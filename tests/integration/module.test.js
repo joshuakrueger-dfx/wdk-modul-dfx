@@ -4,9 +4,8 @@
 import { readFile } from 'node:fs/promises'
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/globals'
 import { NoSuchElementError, ProviderError, ValueError } from '@tetherto/wdk-wallet/protocols'
-import { verifyMessage } from 'ethers'
 import DfxProtocol from '../../index.js'
-import { expectRequests, httpRequest } from '../helpers.js'
+import { expectRequests, failure, httpRequest, response } from '../helpers.js'
 import {
   accountFixture, challengeMessage, DummyFirstSignature, DummySmartAccount,
   DUMMY_SMART_ADDRESS, DUMMY_TOKEN, EXTERNAL_TRANSACTION_ID, LOCAL_CONFIG, PAIR,
@@ -135,9 +134,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
       const error = await protocol.getTransactionDetail(UID).then(() => undefined, error => error)
 
-      expect(error?.constructor).toBe(NoSuchElementError)
-      expect(error?.message).toBe(EXPECTED_UID_MESSAGE)
-      expect(error?.reason).toBeUndefined()
+      await failure(Promise.reject(error), NoSuchElementError, EXPECTED_UID_MESSAGE)
     })
 
     test('rejects an unregistered external ID with the recorded NoSuchElementError', async () => {
@@ -148,28 +145,218 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const error = await protocol.getTransactionDetail(EXTERNAL_TRANSACTION_ID, { idType: 'externalTransactionId' })
         .then(() => undefined, error => error)
 
-      expect(error?.constructor).toBe(NoSuchElementError)
-      expect(error?.message).toBe(EXPECTED_EXTERNAL_MESSAGE)
+      await failure(Promise.reject(error), NoSuchElementError, EXPECTED_EXTERNAL_MESSAGE)
     })
   })
 
   describe('authentication sessions', () => {
+    // Fixed ethers HDNodeWallet vectors for the public fixture mnemonic, path m/44'/60'/0'/0/0.
+    const OWNER = '0x405005c7c4422390f4b334f64cf20e0b767131d0'
+    const MESSAGE = challengeMessage(OWNER)
+    const SIGNATURE = '0xf422b86a971338356e72f01f5e21456c8013321d5f6e23d08d344f2537bdc51f7a4ef5258e2684fdd5ec49c43a3576c2683bec8ab3d5e072484d53c9c1674aa41c'
     const OPTIONS = { ...PAIR, fiatAmount: 10000n }
     const BUY_URL = `https://dev.app.dfx.swiss/buy?session=${DUMMY_TOKEN}&lang=en&asset-in=CHF&asset-out=USDT&blockchain=Ethereum&amount-in=100`
     const BUY_URL_2 = `https://dev.app.dfx.swiss/buy?session=${DUMMY_TOKEN}.2&lang=en&asset-in=CHF&asset-out=USDT&blockchain=Ethereum&amount-in=100`
     const SELL_URL_2 = `https://dev.app.dfx.swiss/sell?session=${DUMMY_TOKEN}.2&lang=en&asset-in=USDT&asset-out=CHF&blockchain=Ethereum&amount-out=100`
     const DETAIL_EVENT = `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}`
+    const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${OWNER}`, 'GET', undefined, undefined, 'sandbox')
+    const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
+    const DETAIL = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, DUMMY_TOKEN, 'sandbox')
+    const DETAIL_2 = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.2`, 'sandbox')
+    const CATALOG = [
+      httpRequest('/v1/asset', 'GET', undefined, undefined, 'sandbox'),
+      httpRequest('/v1/fiat', 'GET', undefined, undefined, 'sandbox')
+    ]
+    const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
+
+    test('parallel first lookups share one signature and keep their token for the next lookup', async () => {
+      await resetServer({ completedDetail: true })
+      const EXPECTED_REQUESTS = [CHALLENGE, AUTH, DETAIL, DETAIL, ...CATALOG, ...CATALOG, DETAIL, ...CATALOG]
+      const tracked = new DummySmartAccount(await freshAccount(), OWNER)
+      const requests = []
+      const protocol = new DfxProtocol(tracked, {
+        ...LOCAL_CONFIG,
+        fetch: (url, init) => {
+          requests.push([url, init])
+          return LOCAL_CONFIG.fetch(url, init)
+        }
+      })
+
+      const results = await Promise.all([protocol.getTransactionDetail(UID), protocol.getTransactionDetail(UID)])
+      const cached = await protocol.getTransactionDetail(UID)
+
+      expect(results).toEqual([EXPECTED_DETAIL, EXPECTED_DETAIL])
+      expect(cached).toEqual(EXPECTED_DETAIL)
+      expect(tracked.messages).toEqual([MESSAGE])
+      expectRequests(requests, EXPECTED_REQUESTS)
+    })
+
+    test('parallel 401 responses share one renewal and retain its token for the next lookup', async () => {
+      await resetServer({ completedDetail: true })
+      const EXPECTED_REQUESTS = [
+        CHALLENGE, AUTH, DETAIL, ...CATALOG,
+        DETAIL, DETAIL, CHALLENGE, AUTH, DETAIL_2, DETAIL_2, ...CATALOG, ...CATALOG,
+        DETAIL_2, ...CATALOG
+      ]
+      const tracked = new DummySmartAccount(await freshAccount(), OWNER)
+      const requests = []
+      let rejectOld = false
+      let rejected = 0
+      let release
+      const bothRejected = new Promise(resolve => { release = resolve })
+      const protocol = new DfxProtocol(tracked, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          requests.push([url, init])
+          if (rejectOld && new URL(url).pathname === '/v1/transaction/detail/single' && init.headers.Authorization === `Bearer ${DUMMY_TOKEN}`) {
+            if (++rejected === 2) release()
+            await bothRejected
+            return response({ message: 'Expired detail session' }, 401)
+          }
+          return LOCAL_CONFIG.fetch(url, init)
+        }
+      })
+
+      const initial = await protocol.getTransactionDetail(UID)
+      rejectOld = true
+      const results = await Promise.all([protocol.getTransactionDetail(UID), protocol.getTransactionDetail(UID)])
+      const cached = await protocol.getTransactionDetail(UID)
+
+      expect(initial).toEqual(EXPECTED_DETAIL)
+      expect(results).toEqual([EXPECTED_DETAIL, EXPECTED_DETAIL])
+      expect(cached).toEqual(EXPECTED_DETAIL)
+      expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
+      expectRequests(requests, EXPECTED_REQUESTS)
+    })
+
+    test('a failed shared login rejects every waiter with the same error and releases the next login', async () => {
+      await resetServer({ auth: 'unauthorized', completedDetail: true })
+      const EXPECTED_REQUESTS = [CHALLENGE, AUTH, CHALLENGE, AUTH, DETAIL_2, ...CATALOG, DETAIL_2, ...CATALOG]
+      const tracked = new DummySmartAccount(await freshAccount(), OWNER)
+      const requests = []
+      const protocol = new DfxProtocol(tracked, {
+        ...LOCAL_CONFIG,
+        fetch: (url, init) => {
+          requests.push([url, init])
+          return LOCAL_CONFIG.fetch(url, init)
+        }
+      })
+
+      const errors = await Promise.all([
+        protocol.getTransactionDetail(UID).catch(error => error),
+        protocol.getTransactionDetail(UID).catch(error => error)
+      ])
+      const next = await protocol.getTransactionDetail(UID)
+      const cached = await protocol.getTransactionDetail(UID)
+
+      await failure(Promise.reject(errors[0]), ProviderError, 'Invalid signature', 'UNAUTHORIZED')
+      expect(errors[1]).toBe(errors[0])
+      expect(next).toEqual(EXPECTED_DETAIL)
+      expect(cached).toEqual(EXPECTED_DETAIL)
+      expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
+      expectRequests(requests, EXPECTED_REQUESTS)
+    })
+
+    test('a two-generations-old caller spends its only retry on the current expired token', async () => {
+      const DETAIL_3 = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.3`, 'sandbox')
+      const DETAIL_4 = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.4`, 'sandbox')
+      await resetServer({ completedDetail: true })
+      const EXPECTED_REQUESTS = [
+        CHALLENGE, AUTH, DETAIL, ...CATALOG, DETAIL,
+        DETAIL, CHALLENGE, AUTH, DETAIL_2, ...CATALOG,
+        DETAIL_2, CHALLENGE, AUTH, DETAIL_3, ...CATALOG,
+        DETAIL_3, CHALLENGE, AUTH, DETAIL_4, ...CATALOG
+      ]
+      const tracked = new DummySmartAccount(await freshAccount(), OWNER)
+      const requests = []
+      let rejectedToken
+      let hold = false
+      let signalHeld
+      let release
+      const held = new Promise(resolve => { signalHeld = resolve })
+      const released = new Promise(resolve => { release = resolve })
+      const protocol = new DfxProtocol(tracked, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          requests.push([url, init])
+          if (new URL(url).pathname === '/v1/transaction/detail/single' && init.headers.Authorization === rejectedToken) {
+            if (hold) {
+              hold = false
+              signalHeld()
+              await released
+            }
+            return response({ message: 'Expired detail session' }, 401)
+          }
+          return LOCAL_CONFIG.fetch(url, init)
+        }
+      })
+
+      const initial = await protocol.getTransactionDetail(UID)
+      rejectedToken = `Bearer ${DUMMY_TOKEN}`
+      hold = true
+      const late = protocol.getTransactionDetail(UID).catch(error => error)
+      await held
+      let second
+      let third
+      try {
+        second = await protocol.getTransactionDetail(UID)
+        rejectedToken = `Bearer ${DUMMY_TOKEN}.2`
+        third = await protocol.getTransactionDetail(UID)
+        rejectedToken = `Bearer ${DUMMY_TOKEN}.3`
+      } finally {
+        release()
+      }
+      const error = await late
+      const next = await protocol.getTransactionDetail(UID)
+
+      expect(initial).toEqual(EXPECTED_DETAIL)
+      expect(second).toEqual(EXPECTED_DETAIL)
+      expect(third).toEqual(EXPECTED_DETAIL)
+      await failure(Promise.reject(error), ProviderError, 'Expired detail session', 'UNAUTHORIZED')
+      expect(next).toEqual(EXPECTED_DETAIL)
+      expect(tracked.messages).toEqual([MESSAGE, MESSAGE, MESSAGE, MESSAGE])
+      expectRequests(requests, EXPECTED_REQUESTS)
+    })
 
     test.each([
-      [1, 'DFX network request failed', 'NETWORK_ERROR', `${DUMMY_TOKEN}.2`],
-      [2, 'Unauthorized', 'UNAUTHORIZED', `${DUMMY_TOKEN}.3`]
-    ])('preserves another call\'s renewed session after a delayed HTTP 401 on attempt %s', async (ATTEMPT, EXPECTED_MESSAGE, EXPECTED_REASON, EXPECTED_TOKEN) => {
+      ['buy', false, { buyUrl: BUY_URL_2 }],
+      ['sell', false, { sellUrl: SELL_URL_2 }],
+      ['buy', true, undefined]
+    ])('a fresh %s login with failure %s leaves the detail token unchanged', async (METHOD, FAIL, EXPECTED_WIDGET) => {
+      await resetServer({ completedDetail: true })
+      const EXPECTED_REQUESTS = [CHALLENGE, AUTH, DETAIL, ...CATALOG, ...CATALOG, CHALLENGE, AUTH, DETAIL, ...CATALOG]
+      const tracked = new DummySmartAccount(await freshAccount(), OWNER)
+      const requests = []
+      let logins = 0
+      const protocol = new DfxProtocol(tracked, {
+        ...LOCAL_CONFIG,
+        fetch: (url, init) => {
+          requests.push([url, init])
+          if (new URL(url).pathname === '/v1/auth' && ++logins === 2 && FAIL) {
+            return response({ message: 'Widget login failed' }, 401)
+          }
+          return LOCAL_CONFIG.fetch(url, init)
+        }
+      })
+
+      const initial = await protocol.getTransactionDetail(UID)
+      const widget = await protocol[METHOD](OPTIONS).catch(error => error)
+      const cached = await protocol.getTransactionDetail(UID)
+
+      expect(initial).toEqual(EXPECTED_DETAIL)
+      if (FAIL) await failure(Promise.reject(widget), ProviderError, 'Widget login failed', 'UNAUTHORIZED')
+      else expect(widget).toEqual(EXPECTED_WIDGET)
+      expect(cached).toEqual(EXPECTED_DETAIL)
+      expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
+      expectRequests(requests, EXPECTED_REQUESTS)
+    })
+
+    test.each([
+      [1, `${DUMMY_TOKEN}.2`],
+      [2, `${DUMMY_TOKEN}.3`]
+    ])('preserves another call\'s renewed session after a delayed HTTP 401 on attempt %s', async (ATTEMPT, EXPECTED_TOKEN) => {
       await resetServer({ expireDetails: ATTEMPT, completedDetail: true })
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const MESSAGE = challengeMessage(OWNER)
-      const SIGNATURE = await account.sign(MESSAGE)
-      const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
       const tracked = new DummySmartAccount(account, OWNER)
       const requests = []
       let signalDelayed
@@ -177,16 +364,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const delayed = new Promise(resolve => { signalDelayed = resolve })
       const released = new Promise(resolve => { releaseDelayed = resolve })
       let detailCalls = 0
-      let failChallenge = false
       const protocol = new DfxProtocol(tracked, {
         ...LOCAL_CONFIG,
         fetch: async (url, init) => {
           requests.push([url, init])
           const path = new URL(url).pathname
-          if (failChallenge && path === '/v1/auth/signMessage') {
-            failChallenge = false
-            throw new Error('Delayed caller cannot renew')
-          }
           const hold = path === '/v1/transaction/detail/single' && ++detailCalls === ATTEMPT
           const response = await LOCAL_CONFIG.fetch(url, init)
           if (hold) {
@@ -197,39 +379,28 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
         }
       })
 
-      const initial = await protocol.buy(OPTIONS)
+      const FRESH_DETAIL = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, EXPECTED_TOKEN, 'sandbox')
+      const BEFORE_RENEWAL = ATTEMPT === 1 ? [DETAIL, DETAIL] : [DETAIL, CHALLENGE, AUTH, DETAIL_2, DETAIL_2]
+      const AFTER_RENEWAL = ATTEMPT === 1 ? [FRESH_DETAIL, ...CATALOG] : []
+
       const lateCall = protocol.getTransactionDetail(UID).catch(error => error)
       await delayed
       let renewed
       try {
         renewed = await protocol.getTransactionDetail(UID)
-        failChallenge = ATTEMPT === 1
       } finally {
         releaseDelayed()
       }
       const error = await lateCall
       const cached = await protocol.getTransactionDetail(UID)
 
-      expect(initial).toEqual({ buyUrl: BUY_URL })
       expect(renewed).toEqual(EXPECTED_DETAIL)
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe(EXPECTED_MESSAGE)
-      expect(error.reason).toBe(EXPECTED_REASON)
+      if (ATTEMPT === 1) expect(error).toEqual(EXPECTED_DETAIL)
+      else await failure(Promise.reject(error), ProviderError, 'Unauthorized', 'UNAUTHORIZED')
       expect(cached).toEqual(EXPECTED_DETAIL)
       expect(tracked.messages).toEqual(Array.from({ length: ATTEMPT + 1 }, () => MESSAGE))
-      const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${OWNER}`, 'GET', undefined, undefined, 'sandbox')
-      const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
-      const DETAIL = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, DUMMY_TOKEN, 'sandbox')
-      const DETAIL_2 = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.2`, 'sandbox')
-      const FRESH_DETAIL = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, EXPECTED_TOKEN, 'sandbox')
-      const CATALOG = [
-        httpRequest('/v1/asset', 'GET', undefined, undefined, 'sandbox'),
-        httpRequest('/v1/fiat', 'GET', undefined, undefined, 'sandbox')
-      ]
-      const BEFORE_RENEWAL = ATTEMPT === 1 ? [DETAIL, DETAIL] : [DETAIL, CHALLENGE, AUTH, DETAIL_2, DETAIL_2]
-      const AFTER_RENEWAL = ATTEMPT === 1 ? [CHALLENGE] : []
       expectRequests(requests, [
-        ...CATALOG, CHALLENGE, AUTH, ...BEFORE_RENEWAL,
+        CHALLENGE, AUTH, ...BEFORE_RENEWAL,
         CHALLENGE, AUTH, FRESH_DETAIL, ...CATALOG, ...AFTER_RENEWAL, FRESH_DETAIL, ...CATALOG
       ])
     })
@@ -237,9 +408,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     test('authenticates again on the next lookup after the renewed token also receives HTTP 401', async () => {
       await resetServer({ expireDetails: 2, completedDetail: true })
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const MESSAGE = challengeMessage(OWNER)
-      const SIGNATURE = await account.sign(MESSAGE)
       const tracked = new DummySmartAccount(account, OWNER)
       const requests = []
       const protocol = new DfxProtocol(tracked, {
@@ -253,13 +421,9 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const error = await protocol.getTransactionDetail(UID).catch(error => error)
       const result = await protocol.getTransactionDetail(UID)
 
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe('Unauthorized')
-      expect(error.reason).toBe('UNAUTHORIZED')
+      await failure(Promise.reject(error), ProviderError, 'Unauthorized', 'UNAUTHORIZED')
       expect(result).toEqual({ cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' })
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE, MESSAGE])
-      const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${OWNER}`, 'GET', undefined, undefined, 'sandbox')
-      const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
       expectRequests(requests, [
         CHALLENGE, AUTH, httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, DUMMY_TOKEN, 'sandbox'),
         CHALLENGE, AUTH, httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.2`, 'sandbox'),
@@ -275,9 +439,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const UNRECORDED_UID = '00000000-0000-4000-8000-000000000001'
       const FAILED_PATH = `/v1/transaction/detail/single?uid=${UNRECORDED_UID}`
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const MESSAGE = challengeMessage(OWNER)
-      const SIGNATURE = await account.sign(MESSAGE)
       const tracked = new DummySmartAccount(account, OWNER)
       const requests = []
       const protocol = new DfxProtocol(tracked, {
@@ -291,15 +452,9 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const error = await protocol.getTransactionDetail(UNRECORDED_UID).catch(error => error)
       const nextError = await protocol.getTransactionDetail(UID).catch(error => error)
 
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe(`Unrecorded DFX request: GET ${FAILED_PATH} body=null`)
-      expect(error.reason).toBe('INTERNAL_SERVER_ERROR')
-      expect(nextError.constructor).toBe(NoSuchElementError)
-      expect(nextError.message).toBe('Transaction not found')
-      expect(nextError.reason).toBeUndefined()
+      await failure(Promise.reject(error), ProviderError, `Unrecorded DFX request: GET ${FAILED_PATH} body=null`, 'INTERNAL_SERVER_ERROR')
+      await failure(Promise.reject(nextError), NoSuchElementError, 'Transaction not found')
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
-      const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${OWNER}`, 'GET', undefined, undefined, 'sandbox')
-      const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
       expectRequests(requests, [
         CHALLENGE, AUTH, httpRequest(FAILED_PATH, 'GET', undefined, DUMMY_TOKEN, 'sandbox'),
         CHALLENGE, AUTH, httpRequest(FAILED_PATH, 'GET', undefined, `${DUMMY_TOKEN}.2`, 'sandbox'),
@@ -307,77 +462,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ])
     })
 
-    test('keeps a concurrent successful login token after the other login fails with 401', async () => {
-      await resetServer({ completedDetail: true })
-      const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const MESSAGE = challengeMessage(OWNER)
-      const SIGNATURE = await account.sign(MESSAGE)
-      const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
-      const smart = new DummySmartAccount(account, OWNER)
-      const requests = []
-      const authResponses = []
-      let releaseSecondLogin
-      let releaseFirstLogin
-      let signalFirstLogin
-      const firstCompleted = new Promise(resolve => { releaseSecondLogin = resolve })
-      const bothAuthenticating = new Promise(resolve => { releaseFirstLogin = resolve })
-      const firstAuthenticating = new Promise(resolve => { signalFirstLogin = resolve })
-      let authCalls = 0
-      const protocol = new DfxProtocol(smart, {
-        ...LOCAL_CONFIG,
-        fetch: async (url, init) => {
-          const isAuth = init.method === 'POST' && new URL(url).pathname === '/v1/auth'
-          if (isAuth) {
-            if (++authCalls === 1) {
-              signalFirstLogin()
-              await bothAuthenticating
-            } else {
-              releaseFirstLogin()
-              await firstCompleted
-            }
-          }
-          requests.push([url, init])
-          const response = await LOCAL_CONFIG.fetch(url, init)
-          if (isAuth) authResponses.push({ status: response.status, body: await response.clone().json() })
-          return response
-        }
-      })
-
-      const firstCall = protocol.getTransactionDetail(UID).finally(() => releaseSecondLogin())
-      await firstAuthenticating
-      const [first, error] = await Promise.all([
-        firstCall,
-        protocol.getTransactionDetail(UID).catch(error => error)
-      ])
-      const cached = await protocol.getTransactionDetail(UID)
-
-      expect(first).toEqual(EXPECTED_DETAIL)
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe('Invalid credentials')
-      expect(error.reason).toBe('UNAUTHORIZED')
-      expect(cached).toEqual(EXPECTED_DETAIL)
-      expect(authResponses).toEqual([
-        { status: 201, body: { accessToken: DUMMY_TOKEN } },
-        { status: 401, body: { statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' } }
-      ])
-      expect(smart.messages).toEqual([MESSAGE, MESSAGE])
-      const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${OWNER}`, 'GET', undefined, undefined, 'sandbox')
-      const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
-      const DETAIL = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, DUMMY_TOKEN, 'sandbox')
-      const CATALOG = [
-        httpRequest('/v1/asset', 'GET', undefined, undefined, 'sandbox'),
-        httpRequest('/v1/fiat', 'GET', undefined, undefined, 'sandbox')
-      ]
-      expectRequests(requests, [CHALLENGE, CHALLENGE, AUTH, DETAIL, ...CATALOG, AUTH, DETAIL, ...CATALOG])
-    })
-
     test.each([
       ['buy', 'sell', { buyUrl: BUY_URL_2 }],
       ['sell', 'buy', { sellUrl: SELL_URL_2 }]
     ])('%s authenticates the cached owner with one signature on the next login', async (METHOD, FIRST_METHOD, EXPECTED_RESULT) => {
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
@@ -393,10 +482,9 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
 
     test('accepts the new owner as recipient on the login after a cached-owner signature is rejected', async () => {
+      const NEXT_OWNER = '0xcc81e04bada16def9e1afb027b859bec42be49db'
       const account = await freshAccount()
       const nextAccount = await freshAccount(1)
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const NEXT_OWNER = (await nextAccount.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
@@ -405,9 +493,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const error = await protocol.buy({ ...OPTIONS, recipient: NEXT_OWNER }).catch(error => error)
       const result = await protocol.buy({ ...OPTIONS, recipient: NEXT_OWNER })
 
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe('Invalid credentials')
-      expect(error.reason).toBe('UNAUTHORIZED')
+      await failure(Promise.reject(error), ProviderError, 'Invalid credentials', 'UNAUTHORIZED')
       expect(result).toEqual({ buyUrl: BUY_URL_2 })
       expect(smart.messages).toEqual([
         challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER),
@@ -420,13 +506,10 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ])
     })
 
-    test('transaction details authenticate the new owner after a failed owner change without reusing the old bearer', async () => {
+    test('a failed buy login leaves the existing detail session intact', async () => {
       await resetServer({ completedDetail: true })
       const account = await freshAccount()
       const nextAccount = await freshAccount(1)
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const NEXT_OWNER = (await nextAccount.getAddress()).toLowerCase()
-      const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
       const authResponses = []
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, {
@@ -446,24 +529,18 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const result = await protocol.getTransactionDetail(UID)
 
       expect(initialDetail).toEqual(EXPECTED_DETAIL)
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe('Invalid credentials')
-      expect(error.reason).toBe('UNAUTHORIZED')
+      await failure(Promise.reject(error), ProviderError, 'Invalid credentials', 'UNAUTHORIZED')
       expect(result).toEqual(EXPECTED_DETAIL)
       expect(authResponses).toEqual([
         { status: 201, body: { accessToken: DUMMY_TOKEN } },
-        { status: 401, body: { statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' } },
-        { status: 201, body: { accessToken: `${DUMMY_TOKEN}.2` } }
+        { status: 401, body: { statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' } }
       ])
       expect(smart.messages).toEqual([
-        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER),
-        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(NEXT_OWNER)
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER)
       ])
       expect(await serverControl('/__events')).toEqual([
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT,
-        `challenge:${OWNER}`, `login:${OWNER}`,
-        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${NEXT_OWNER}`, `login:${NEXT_OWNER}`,
-        `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}.2`
+        `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT
       ])
     })
 
@@ -473,7 +550,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ['missing token', true, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR', { status: 201, body: {} }]
     ])('discards a previously cached owner after %s with preserved registrations %s without retrying that login', async (MODE, PRESERVE_REGISTRATIONS, EXPECTED_MESSAGE, EXPECTED_REASON, EXPECTED_AUTH_FAILURE) => {
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const authResponses = []
       const protocol = new DfxProtocol(smart, {
@@ -493,9 +569,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const error = await protocol.buy(OPTIONS).catch(error => error)
       const result = await protocol.buy(OPTIONS)
 
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe(EXPECTED_MESSAGE)
-      expect(error.reason).toBe(EXPECTED_REASON)
+      await failure(Promise.reject(error), ProviderError, EXPECTED_MESSAGE, EXPECTED_REASON)
       expect(result).toEqual({ buyUrl: BUY_URL_2 })
       expect(authResponses).toEqual([
         { status: 201, body: { accessToken: DUMMY_TOKEN } },
@@ -515,16 +589,13 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects a cached smart-account delivery after owner authentication', async (METHOD, FIELD) => {
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
       await protocol.getTransactionDetail(UID).catch(() => {})
       const error = await protocol[METHOD]({ ...OPTIONS, [FIELD]: DUMMY_SMART_ADDRESS }).catch(error => error)
 
-      expect(error.constructor).toBe(ValueError)
-      expect(error.message).toBe(`DFX delivers to the signing owner address ${OWNER} for this account; ${FIELD} must match it and the smart-account address cannot be used as ${FIELD}`)
-      expect(error.reason).toBeUndefined()
+      await failure(Promise.reject(error), ValueError, `DFX delivers to the signing owner address ${OWNER} for this account; ${FIELD} must match it and the smart-account address cannot be used as ${FIELD}`)
       expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER)])
       expect(await serverControl('/__events')).toEqual([
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT,
@@ -537,7 +608,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ['sell', 'refundAddress', { sellUrl: SELL_URL_2 }]
     ])('%s opens a fresh session after transaction lookup', async (METHOD, FIELD, EXPECTED_RESULT) => {
       const account = await freshAccount()
-      const ADDRESS = await account.getAddress()
+      const ADDRESS = OWNER
       const tracked = new DummySmartAccount(account, ADDRESS)
       const protocol = new DfxProtocol(tracked, LOCAL_CONFIG)
 
@@ -559,7 +630,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ])('repeats owner recovery after %s', async (MODE, FAULTS, EXPECTED_URL, FIRST_SIGNATURES) => {
       await resetServer(FAULTS)
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
       const FIRST_MESSAGES = [challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER)].slice(0, FIRST_SIGNATURES)
@@ -580,43 +650,37 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
 
     test('does not cache a signer recovered from a signature over a foreign message', async () => {
+      const DUMMY_FOREIGN_SIGNATURE = '0x04fbc3f306f2462bc37c9e69e37139d1a4e1fd5c42e46dae5f28d9b48cb1552b583a9e21996b76d8065c700fccb2e27d40d7207c715c0a2a1a950fc43f5865911b'
+      const FOREIGN_RECOVERED_OWNER = '0x1960575f8e1f1399853ca5d7e2f917613c29e0b0'
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
-      const DUMMY_FOREIGN_SIGNATURE = await account.sign('A different message, not the DFX challenge')
-      // Independent SDK oracle for the wrong owner implied by this foreign signature.
-      const FOREIGN_OWNER = verifyMessage(challengeMessage(DUMMY_SMART_ADDRESS), DUMMY_FOREIGN_SIGNATURE).toLowerCase()
       const smart = new DummyFirstSignature(account, DUMMY_FOREIGN_SIGNATURE)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
       const initialError = await protocol.sell(OPTIONS).catch(error => error)
       const result = await protocol.buy(OPTIONS)
 
-      expect(initialError.constructor).toBe(ProviderError)
-      expect(initialError.message).toBe('Invalid signature')
-      expect(initialError.reason).toBe('UNAUTHORIZED')
+      await failure(Promise.reject(initialError), ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expect(result).toEqual({ buyUrl: BUY_URL })
       expect(smart.messages).toEqual([
-        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(FOREIGN_OWNER),
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(FOREIGN_RECOVERED_OWNER),
         challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER)
       ])
       expect(await serverControl('/__events')).toEqual([
-        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${FOREIGN_OWNER}`, `login:${FOREIGN_OWNER}`,
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${FOREIGN_RECOVERED_OWNER}`, `login:${FOREIGN_RECOVERED_OWNER}`,
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`
       ])
     })
 
     test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects mismatched delivery for a cached EOA before signing or login', async (METHOD, FIELD) => {
       const account = await freshAccount()
-      const ADDRESS = await account.getAddress()
+      const ADDRESS = OWNER
       const tracked = new DummySmartAccount(account, ADDRESS)
       const protocol = new DfxProtocol(tracked, LOCAL_CONFIG)
 
       await protocol.getTransactionDetail(UID).catch(() => {})
       const error = await protocol[METHOD]({ ...OPTIONS, [FIELD]: DUMMY_SMART_ADDRESS }).catch(error => error)
 
-      expect(error.constructor).toBe(ValueError)
-      expect(error.message).toBe(`${FIELD} must match the account address`)
-      expect(error.reason).toBeUndefined()
+      await failure(Promise.reject(error), ValueError, `${FIELD} must match the account address`)
       expect(tracked.messages).toEqual([challengeMessage(ADDRESS)])
       expect(await serverControl('/__events')).toEqual([
         `challenge:${ADDRESS}`, `login:${ADDRESS}`, DETAIL_EVENT
@@ -625,7 +689,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test('EOA needs one signature for each fresh login', async () => {
       const account = await freshAccount()
-      const ADDRESS = await account.getAddress()
+      const ADDRESS = OWNER
       const tracked = new DummySmartAccount(account, ADDRESS)
       const protocol = new DfxProtocol(tracked, LOCAL_CONFIG)
 
@@ -642,7 +706,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     test('a changed account address does not borrow the previous owner cache', async () => {
       const DUMMY_NEXT_SMART_ADDRESS = '0x0000000000000000000000000000000000000002'
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
@@ -662,7 +725,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test('a fresh protocol does not borrow another instance owner cache', async () => {
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
       const fresh = new DfxProtocol(smart, LOCAL_CONFIG)
@@ -682,7 +744,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test('an unrecoverable signature does not block owner recovery on a later login', async () => {
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummyFirstSignature(account, 'invalid-signature')
       const authResponses = []
       const protocol = new DfxProtocol(smart, {
@@ -699,9 +760,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const initialError = await protocol.sell(OPTIONS).catch(error => error)
       const result = await protocol.buy(OPTIONS)
 
-      expect(initialError.constructor).toBe(ProviderError)
-      expect(initialError.message).toBe('Invalid signature')
-      expect(initialError.reason).toBe('UNAUTHORIZED')
+      await failure(Promise.reject(initialError), ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expect(result).toEqual({ buyUrl: BUY_URL })
       expect(authResponses).toEqual([
         { status: 400, body: { statusCode: 400, message: 'Invalid signature', error: 'Bad Request' } },
@@ -714,34 +773,38 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ])
     })
 
-    test('transaction details reuse the widget session', async () => {
+    test('transaction details establish their own session after a widget login', async () => {
       const account = await freshAccount()
-      const ADDRESS = await account.getAddress()
+      const ADDRESS = OWNER
       const tracked = new DummySmartAccount(account, ADDRESS)
       const protocol = new DfxProtocol(tracked, LOCAL_CONFIG)
 
       await protocol.buy(OPTIONS)
       await protocol.getTransactionDetail(UID).catch(() => {})
 
-      expect(tracked.messages).toEqual([challengeMessage(ADDRESS)])
-      expect(await serverControl('/__events')).toEqual([`challenge:${ADDRESS}`, `login:${ADDRESS}`, DETAIL_EVENT])
+      expect(tracked.messages).toEqual([challengeMessage(ADDRESS), challengeMessage(ADDRESS)])
+      expect(await serverControl('/__events')).toEqual([
+        `challenge:${ADDRESS}`, `login:${ADDRESS}`, `challenge:${ADDRESS}`, `login:${ADDRESS}`,
+        `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}.2`
+      ])
     })
 
-    test('transaction details renew an expired widget session with the cached owner', async () => {
+    test('transaction details renew their own expired session with the cached owner', async () => {
       const DETAIL_EVENT_2 = `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}.2`
+      const DETAIL_EVENT_3 = `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}.3`
       await resetServer({ expireDetails: 1 })
       const account = await freshAccount()
-      const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
       await protocol.buy(OPTIONS)
       await protocol.getTransactionDetail(UID).catch(() => {})
 
-      expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER)])
+      expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER), challengeMessage(OWNER)])
       expect(await serverControl('/__events')).toEqual([
-        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT,
-        `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT_2
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`,
+        `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT_2,
+        `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT_3
       ])
     })
   })
