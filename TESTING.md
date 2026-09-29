@@ -34,10 +34,6 @@ unless it says so.
 
 ## Summary
 
-Round 25 adds conditional invalidation of rejected transaction-detail tokens and regression tests for delayed 401
-responses, rejection of the renewed token, and registration-sensitive replay faults. No checks were run for these
-changes; the counts and coverage below remain the previously recorded results.
-
 | Layer | Command | Result |
 | --- | --- | --- |
 | Integration, local | `npm run test:integration` | 39/39 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
