@@ -69,7 +69,8 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "TESTING.md"
   ],
   "jest": {
     "testPathIgnorePatterns": [

@@ -1,7 +1,7 @@
 # DFX module E2E probes
 
-This private package contains the six probes and wallet simulator used for the
-2026-09-24 module checks. It consumes the module from `file:..`; it is excluded
+This private package contains the probes and wallet simulator used for the
+module checks recorded in the repository's `TESTING.md`. It consumes the module from `file:..`; it is excluded
 from the root package's publish allowlist and Standard lint scope. Historical
 results belong in the repository's `TESTING.md`; copying these probes is not a
 new successful test run.
@@ -31,9 +31,8 @@ this setting enabled.
 
 All commands below run from `e2e/`. Direct dependencies are pinned to the tested
 versions, including `bs58` 6.0.0 and `@noble/curves` 1.2.0 read from the original
-probe installation. There is no generated lockfile in this import: transitive
-dependency resolution is not frozen. Installation and execution were not performed
-as part of the import.
+probe installation. `e2e/package-lock.json` freezes the transitive resolution;
+`npm ci` installs exactly that set.
 
 The network probes need access to DFX and the configured public chain RPCs. The
 signature differential needs no network after installation. Wallet journeys need
