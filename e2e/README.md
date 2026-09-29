@@ -342,5 +342,5 @@ process list. Use an endpoint without a key or a dedicated key only for this pro
 ```sh
 node safe-deployed.mjs > out/safe-deployed.log 2>&1
 # Alternative upstream if the default RPC is overloaded:
-ANVIL_FORK_URL=https://1rpc.io/matic node safe-deployed.mjs > out/safe-deployed.log 2>&1
+ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs > out/safe-deployed.log 2>&1
 ```

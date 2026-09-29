@@ -21,7 +21,7 @@ async function startServer () {
   })
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('Wallet server startup timed out')), 30000)
-    const exited = () => finish(new Error('Wallet server exited before readiness (check port 4748)'))
+    const exited = () => finish(new Error(`Wallet server exited before readiness (check port ${PORT})`))
     const ready = message => { if (message === 'ready') finish() }
     function finish (error) {
       clearTimeout(timer)

@@ -197,7 +197,9 @@ async function run () {
     let hash
     try {
       hash = await rpc('eth_sendTransaction', [{ from: owner, to: smartAccount.factoryAddress, data: smartAccount.factoryData, value: '0x0', gas: '0x7a1200' }])
-      const receipt = await waitFor(() => rpc('eth_getTransactionReceipt', [hash]), 60000, 'Deployment receipt timed out')
+      const receipt = await waitFor(async () => {
+        try { return await rpc('eth_getTransactionReceipt', [hash]) } catch { return false }
+      }, 60000, 'Deployment receipt timed out')
       check(receipt.status === '0x1', 'Safe deployment transaction reverted')
     } finally {
       await rpc('anvil_stopImpersonatingAccount', [owner])
