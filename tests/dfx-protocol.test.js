@@ -791,7 +791,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test.each([
       ['unauthorized', 'POST /v1/auth', { message: 'Invalid signature' }, 401, 'Invalid signature', 'UNAUTHORIZED', OWNER_AUTH_REQUESTS, [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]]],
-      ['missing token', 'POST /v1/auth', {}, 200, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR', OWNER_AUTH_REQUESTS, [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]]],
+      ['missing token', 'POST /v1/auth', {}, 201, 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR', OWNER_AUTH_REQUESTS, [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]]],
       ['owner challenge failure', `GET /v1/auth/signMessage?address=${OWNER_ADDRESS}`, { message: 'Challenge unavailable' }, 401, 'Challenge unavailable', 'UNAUTHORIZED', OWNER_AUTH_REQUESTS.slice(0, 2), [[DUMMY_ACCOUNT_MESSAGE]]]
     ])(
       'reports owner authentication failure %s', async (MODE, ROUTE, DUMMY_BODY, DUMMY_STATUS, EXPECTED_MESSAGE, EXPECTED_REASON, EXPECTED_REQUESTS, EXPECTED_SIGNATURES) => {
@@ -1435,6 +1435,27 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     const DETAIL_REQUESTS = [CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST, ...CATALOG_REQUESTS]
     accountCases('getTransactionDetail')
     arrayMessageCases('getTransactionDetail')
+
+    test('uses each concurrent login token for its own transaction-detail request', async () => {
+      const { protocol } = setup({}, {
+        'POST /v1/auth': jest.fn()
+          .mockResolvedValueOnce(response({ accessToken: 'dummy-first-session' }, 201))
+          .mockResolvedValueOnce(response({ accessToken: 'dummy-second-session' }, 201))
+      })
+
+      const result = await Promise.all([protocol.getTransactionDetail('123'), protocol.getTransactionDetail('123')])
+
+      expect(result).toEqual([
+        { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' },
+        { cryptoAsset: 'ETH', fiatCurrency: 'EUR', status: 'completed' }
+      ])
+      expectInteractions([
+        CHALLENGE_REQUEST, CHALLENGE_REQUEST, AUTH_REQUEST, AUTH_REQUEST,
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-first-session'),
+        httpRequest('/v1/transaction/detail/single?uid=123', 'GET', undefined, 'dummy-second-session'),
+        ...CATALOG_REQUESTS, ...CATALOG_REQUESTS
+      ], [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
+    })
 
     test('transaction-detail renewal authenticates the cached owner', async () => {
       const { protocol, routes } = ownerSetup()

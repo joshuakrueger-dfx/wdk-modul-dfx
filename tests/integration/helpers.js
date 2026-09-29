@@ -22,8 +22,8 @@ export async function serverControl (path, options) {
   return response.json()
 }
 
-export function resetServer (faults = {}) {
-  return serverControl('/__reset', { method: 'POST', body: JSON.stringify(faults) })
+export function resetServer (faults = {}, { preserveRegistrations = false } = {}) {
+  return serverControl(`/__reset?preserveRegistrations=${preserveRegistrations}`, { method: 'POST', body: JSON.stringify(faults) })
 }
 
 export const DUMMY_SMART_ADDRESS = '0x0000000000000000000000000000000000000001'

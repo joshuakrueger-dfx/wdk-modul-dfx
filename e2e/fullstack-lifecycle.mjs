@@ -613,11 +613,14 @@ function confirmBankExecution(s) {
   return JSON.parse(output)
 }
 async function simulate(s, name, fn, options) {
-  return event(s, name, () => {
-    const evidence = fn(s)
-    if (evidence.notReached) s.halted.push({ event: name, ...evidence })
-    return evidence
-  }, options)
+  let evidence
+  try {
+    evidence = fn(s)
+  } catch (error) {
+    return step(`${s.label}: ${name}`, () => { throw error })
+  }
+  if (evidence.notReached) return halt(s, name, evidence.reason)
+  return event(s, name, () => evidence, options)
 }
 async function purchase(s, spec, dependencies, context) {
   const payment = await step(`${s.label}: widget payment information`, () => openWidget(spec, context), dependencies)

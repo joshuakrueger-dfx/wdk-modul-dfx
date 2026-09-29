@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/
 import { NoSuchElementError, ProviderError, ValueError } from '@tetherto/wdk-wallet/protocols'
 import { verifyMessage } from 'ethers'
 import DfxProtocol from '../../index.js'
+import { expectRequests, httpRequest } from '../helpers.js'
 import {
   accountFixture, challengeMessage, DummyFirstSignature, DummySmartAccount,
   DUMMY_SMART_ADDRESS, DUMMY_TOKEN, EXTERNAL_TRANSACTION_ID, LOCAL_CONFIG, PAIR,
@@ -159,6 +160,71 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     const SELL_URL_2 = `https://dev.app.dfx.swiss/sell?session=${DUMMY_TOKEN}.2&lang=en&asset-in=USDT&asset-out=CHF&blockchain=Ethereum&amount-out=100`
     const DETAIL_EVENT = `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}`
 
+    test('keeps a concurrent successful login token after the other login fails with 401', async () => {
+      await resetServer({ completedDetail: true })
+      const account = await freshAccount()
+      const OWNER = (await account.getAddress()).toLowerCase()
+      const MESSAGE = challengeMessage(OWNER)
+      const SIGNATURE = await account.sign(MESSAGE)
+      const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
+      const smart = new DummySmartAccount(account, OWNER)
+      const requests = []
+      const authResponses = []
+      let releaseSecondLogin
+      let releaseFirstLogin
+      let signalFirstLogin
+      const firstCompleted = new Promise(resolve => { releaseSecondLogin = resolve })
+      const bothAuthenticating = new Promise(resolve => { releaseFirstLogin = resolve })
+      const firstAuthenticating = new Promise(resolve => { signalFirstLogin = resolve })
+      let authCalls = 0
+      const protocol = new DfxProtocol(smart, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          const isAuth = init.method === 'POST' && new URL(url).pathname === '/v1/auth'
+          if (isAuth) {
+            if (++authCalls === 1) {
+              signalFirstLogin()
+              await bothAuthenticating
+            } else {
+              releaseFirstLogin()
+              await firstCompleted
+            }
+          }
+          requests.push([url, init])
+          const response = await LOCAL_CONFIG.fetch(url, init)
+          if (isAuth) authResponses.push({ status: response.status, body: await response.clone().json() })
+          return response
+        }
+      })
+
+      const firstCall = protocol.getTransactionDetail(UID).finally(() => releaseSecondLogin())
+      await firstAuthenticating
+      const [first, error] = await Promise.all([
+        firstCall,
+        protocol.getTransactionDetail(UID).catch(error => error)
+      ])
+      const cached = await protocol.getTransactionDetail(UID)
+
+      expect(first).toEqual(EXPECTED_DETAIL)
+      expect(error.constructor).toBe(ProviderError)
+      expect(error.message).toBe('Invalid credentials')
+      expect(error.reason).toBe('UNAUTHORIZED')
+      expect(cached).toEqual(EXPECTED_DETAIL)
+      expect(authResponses).toEqual([
+        { status: 201, body: { accessToken: DUMMY_TOKEN } },
+        { status: 401, body: { statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' } }
+      ])
+      expect(smart.messages).toEqual([MESSAGE, MESSAGE])
+      const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${OWNER}`, 'GET', undefined, undefined, 'sandbox')
+      const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: OWNER, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
+      const DETAIL = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, DUMMY_TOKEN, 'sandbox')
+      const CATALOG = [
+        httpRequest('/v1/asset', 'GET', undefined, undefined, 'sandbox'),
+        httpRequest('/v1/fiat', 'GET', undefined, undefined, 'sandbox')
+      ]
+      expectRequests(requests, [CHALLENGE, CHALLENGE, AUTH, DETAIL, ...CATALOG, AUTH, DETAIL, ...CATALOG])
+    })
+
     test.each([
       ['buy', 'sell', { buyUrl: BUY_URL_2 }],
       ['sell', 'buy', { sellUrl: SELL_URL_2 }]
@@ -255,17 +321,27 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
 
     test.each([
-      ['unauthorized', 'Invalid signature', 'UNAUTHORIZED'],
-      ['missing token', 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR']
-    ])('discards a previously cached owner after %s without retrying that login', async (MODE, EXPECTED_MESSAGE, EXPECTED_REASON) => {
+      ['unauthorized', 'Invalid credentials', 'UNAUTHORIZED', { status: 401, body: { statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' } }],
+      ['missing token', 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR', { status: 201, body: {} }]
+    ])('discards a previously cached owner after %s without retrying that login', async (MODE, EXPECTED_MESSAGE, EXPECTED_REASON, EXPECTED_AUTH_FAILURE) => {
       const account = await freshAccount()
       const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
-      const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
+      const authResponses = []
+      const protocol = new DfxProtocol(smart, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          const response = await LOCAL_CONFIG.fetch(url, init)
+          if (init.method === 'POST' && new URL(url).pathname === '/v1/auth') {
+            authResponses.push({ status: response.status, body: await response.clone().json() })
+          }
+          return response
+        }
+      })
 
       await protocol.sell(OPTIONS)
       const initialEvents = await serverControl('/__events')
-      await resetServer({ auth: MODE })
+      await resetServer({ auth: MODE }, { preserveRegistrations: true })
       const error = await protocol.buy(OPTIONS).catch(error => error)
       const result = await protocol.buy(OPTIONS)
 
@@ -273,6 +349,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expect(error.message).toBe(EXPECTED_MESSAGE)
       expect(error.reason).toBe(EXPECTED_REASON)
       expect(result).toEqual({ buyUrl: BUY_URL_2 })
+      expect(authResponses).toEqual([
+        { status: 201, body: { accessToken: DUMMY_TOKEN } },
+        EXPECTED_AUTH_FAILURE,
+        { status: 201, body: { accessToken: `${DUMMY_TOKEN}.2` } }
+      ])
       expect(smart.messages).toEqual([
         challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER),
         challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER)

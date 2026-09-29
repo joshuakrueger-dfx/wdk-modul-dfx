@@ -60,12 +60,12 @@ async function preparedSeed () {
   try {
     file = await open(seedFile, constants.O_RDONLY | constants.O_NOFOLLOW)
     const stat = await file.stat()
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new Error()
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) throw new Error()
     const seed = (await file.readFile('utf8')).trim()
     if (!seed) throw new Error()
     return seed
   } catch {
-    throw new Error('Vorbereitete Wallet nicht lesbar: reguläre, nicht leere Seed-Datei mit Rechten 0600 erforderlich (keine Symlinks).')
+    throw new Error('Vorbereitete Wallet nicht lesbar: eigene reguläre, nicht leere Seed-Datei mit Rechten nur für den Eigentümer erforderlich (keine Gruppen- oder Fremdrechte, z. B. 0600; keine Symlinks).')
   } finally { await file?.close() }
 }
 // Validate before listening; never include file contents or underlying errors in diagnostics.
@@ -82,7 +82,7 @@ if (ordersFile) {
     if (!Array.isArray(rows) || rows.some(row => !row || ORDER_FIELDS.some(key => typeof row[key] !== 'string') || !['sandbox', 'production'].includes(row.environment) || !CASES.some(c => c.chain === row.chain && c.network === row.network) || !['buy', 'sell'].includes(row.direction) || !['fiat', 'crypto'].includes(row.amountMode) || !/^\d+(?:\.\d+)?$/.test(row.amount) || !Number.isFinite(Date.parse(row.time)))) throw new Error()
     savedOrders = rows.map(row => Object.fromEntries(ORDER_FIELDS.map(key => [key, row[key]])))
   } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error('WALLET_SIM_ORDERS_FILE konnte nicht geladen werden: gültige eigene reguläre Auftragsdatei mit Rechten 0600 erforderlich (keine Symlinks).')
+    if (error.code !== 'ENOENT') throw new Error('WALLET_SIM_ORDERS_FILE konnte nicht geladen werden: gültige eigene reguläre Auftragsdatei mit Rechten nur für den Eigentümer erforderlich (keine Gruppen- oder Fremdrechte, z. B. 0600; keine Symlinks).')
   } finally { await file?.close() }
 }
 async function saveOrder (order) {
@@ -192,7 +192,7 @@ async function route (path, body, url) {
     check(body.prepared === undefined || typeof body.prepared === 'boolean', 'Ungültige Wallet-Auswahl.')
     check(!body.prepared || (seedFile && body.seed === undefined), 'Keine vorbereitete Wallet verfügbar oder widersprüchliche Auswahl.')
     let seed
-    try { seed = body.prepared ? await preparedSeed() : body.seed?.trim() || WDK.getRandomSeedPhrase() } catch { throw new WalletInputError('Vorbereitete Wallet nicht lesbar. Seed-Datei und Rechte 0600 prüfen.') }
+    try { seed = body.prepared ? await preparedSeed() : body.seed?.trim() || WDK.getRandomSeedPhrase() } catch { throw new WalletInputError('Vorbereitete Wallet nicht lesbar. Eigene Seed-Datei und Rechte nur für den Eigentümer prüfen (keine Gruppen- oder Fremdrechte, z. B. 0600).') }
     const next = { seed, accounts: [], orders: [] }
     try {
       await call(next, 'alle', 'Wallet erstellen', async () => {

@@ -56,7 +56,7 @@ export async function startServer () {
       if (request.method === 'POST' && url.pathname === '/__reset') {
         challenges.clear()
         tokens.clear()
-        registeredAddresses.clear()
+        if (url.searchParams.get('preserveRegistrations') !== 'true') registeredAddresses.clear()
         events.length = 0
         logins = 0
         challengeCount = 0
@@ -103,7 +103,7 @@ export async function startServer () {
         challenges.delete(address)
         ++logins
         if (logins === 1 && faults.auth === 'unauthorized') {
-          rejectAuthentication()
+          send(401, JSON.stringify({ statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' }))
           return
         }
         // Explicit corruption probe, not a recorded successful DFX response.

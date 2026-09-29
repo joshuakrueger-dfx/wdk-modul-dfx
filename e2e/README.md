@@ -135,8 +135,8 @@ key. A URL override determines the actual target environment; `DFX_ENV` selects
 only the default filename. Use production URL input only with explicit
 `DFX_ENV=production`.
 
-The URL file must be a regular file owned by the current user with permissions
-`0600`. Reading rejects symlinks and files with any group/other permissions.
+The URL file must be a regular file owned by the current user with owner-only
+permissions (no group or other access), e.g. `0600`. Reading rejects symlinks.
 
 ### Native-chain quotes
 
@@ -193,8 +193,9 @@ derived from the checkout URL. Sandbox uses `dev.app.dfx.swiss`.
 
 `WALLET_SIM_ENV` defaults to `sandbox` and rejects other values. `PORT` still
 defaults to 4748; the server binds only to `127.0.0.1`. The seed file must be a
-nonempty regular file with permissions `0600` (no group/other permissions or
-symlinks). It is checked at startup and again when loaded. Its contents stay on
+nonempty regular file owned by the current user with owner-only permissions
+(no group or other access), e.g. `0600`, and cannot be a symlink.
+It is checked at startup and again when loaded. Its contents stay on
 the server and are never returned to the browser or logged. A newly generated
 wallet has no exported recovery phrase; use the prepared wallet for a purchase
 that must remain accessible after restart.

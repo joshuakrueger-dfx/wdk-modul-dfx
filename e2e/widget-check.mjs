@@ -15,7 +15,7 @@ try {
   if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) throw new Error()
   urls = JSON.parse(readFileSync(fd, 'utf8'))
 } catch {
-  throw new Error('URL file could not be loaded: valid JSON in an owned regular file with permissions 0600 required (no symlinks).')
+  throw new Error('URL file could not be loaded: valid JSON in an owned regular file with owner-only permissions (no group or other access), e.g. 0600, required (no symlinks).')
 } finally { if (fd !== undefined) closeSync(fd) }
 const sessions = Object.values(urls).map(url => new URL(url).searchParams.get('session')).filter(Boolean)
 const masked = value => sessions.reduce((text, session) => text.split(session).join('[REDACTED]'), String(value)).replace(/([?&]session=)[^&\s"<>]+/g, '$1[REDACTED]')

@@ -61,6 +61,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Preserve a concurrently established session when another sign-in fails; use
+  the token returned by each authentication for its transaction-detail request.
+- Preserve replay registrations when switching authentication faults and return
+  HTTP 401 with Invalid credentials for the unauthorized fault.
+- Fail lifecycle simulations when the backend has not reached the required payout
+  boundary; validate prepared seed ownership and clarify owner-only file permissions.
+
 - Clear the session token and an account's cached EVM owner when its authentication
   POST fails or returns an invalid access token; recover the signer on the next login
   without an automatic retry, including the next transaction lookup.
