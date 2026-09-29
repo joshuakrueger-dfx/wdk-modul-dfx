@@ -17,6 +17,10 @@ if (dfxWalletPath !== wdkWalletPath) {
 
 const API = new URL(process.env.DFX_LOCAL_API ?? 'http://localhost:3020').origin
 const APP = new URL(process.env.DFX_LOCAL_APP ?? 'http://localhost:3021').origin
+for (const origin of [API, APP]) {
+  const url = new URL(origin)
+  assert(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname), 'Disposable local stack only')
+}
 const DB_CONTAINER = process.env.DFX_LOCAL_DB_CONTAINER ?? 'dfx-e2e-wdk2-db-1'
 const API_CONTAINER = process.env.DFX_LOCAL_API_CONTAINER ?? DB_CONTAINER.replace(/-db-1$/, '-api-1')
 const DIR = fileURLToPath(new URL('./out/', import.meta.url))

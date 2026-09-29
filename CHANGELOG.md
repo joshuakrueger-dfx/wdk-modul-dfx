@@ -22,8 +22,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Live catalogs, ISO fiat minor units, typed WDK errors and transaction status mapping.
 - Manually maintained declarations, injected-fetch tests and 100% coverage thresholds.
 - Configuration, security, compatibility and sandbox example documentation.
-- Opt-in sandbox catalog and quote integration tests, plus authenticated URL/detail
-  tests using a local account module; unit coverage excludes integration execution.
+- Local replay integration tests for catalogs, quotes and authenticated URLs/details,
+  using deterministic WDK EVM accounts without an external account module.
+  The coverage gate includes both unit and integration execution.
 
 ### Changed
 
@@ -53,15 +54,19 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Account error allowlists require exact constructors; transaction details pass
   through only ProviderRequiredError and ProviderError from account operations.
 - Declare Node.js ≥ 22 and document testing on Node.js 22.22.0 (CI) and Bare, the CI coverage gate, known limitations
-  and permanent sandbox user creation by authenticated integration tests.
+  and permanent sandbox user creation by `tests/integration/record.js` and authenticated `e2e/` probes.
 
 ### Fixed
 
+- Clear an account's cached EVM owner when its authentication POST fails or returns
+  an invalid access token; recover the signer on the next login without an automatic retry.
+- Treat empty asset descriptions like null, returning an undefined display name.
 - Authenticate EVM ERC-4337 accounts using the EIP-191 signing owner, as in DFX's
   own wallet, with signature-only Noble recovery and an instance-local owner cache.
   DFX delivers purchases to the owner EOA outside the smart account; recipient and
   refund overrides must match that authentication address. Malformed signatures
-  retain backend validation. These changes await sandbox verification.
+  retain backend validation. Sandbox verification on 2026-09-28 against `ec9b788`
+  includes the live matrix, deployed ERC-4337 (13/13) and native quotes; see TESTING.md.
 - Use 8 decimals for Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO only when
   API decimals are null or absent, enabling their supported-list entries, quotes
   and trades while preserving API precedence and exclusion of other missing-decimal assets.

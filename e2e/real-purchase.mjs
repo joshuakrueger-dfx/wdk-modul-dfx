@@ -4,7 +4,6 @@ import { homedir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { execFile } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import WDK from '@tetherto/wdk'
 import WalletManagerEvm from '@tetherto/wdk-wallet-evm'
@@ -71,8 +70,11 @@ function privateFile (file, create, contents) {
     if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid()) {
       throw new Error('Zustandsdatei muss eine eigene reguläre Datei ohne Hardlinks sein')
     }
+    if (!create) {
+      if ((stat.mode & 0o077) !== 0) throw new Error('Zustandsdatei muss privat sein: Rechte 0600 erforderlich')
+      return readFileSync(fd, 'utf8')
+    }
     fchmodSync(fd, 0o600)
-    if (!create) return readFileSync(fd, 'utf8')
     writeFileSync(fd, contents, 'utf8')
     fsyncSync(fd)
   } finally {
@@ -105,7 +107,7 @@ function walletSelfTest () {
   }
 }
 
-async function prepare (fiat, address, fiatAmount, openWidget) {
+async function prepare (fiat, address, fiatAmount, confirm) {
   if (exists(stateFile) || exists(widgetFile)) {
     throw new Error('Kauf bereits vorbereitet: vorhandene widget-url.txt verwenden und mit status nachverfolgen; Zustand wird nicht überschrieben')
   }
@@ -122,6 +124,7 @@ async function prepare (fiat, address, fiatAmount, openWidget) {
   console.log(`Arbiscan: https://arbiscan.io/address/${address}`)
   console.log(`Quote: ${units(quote.fiatAmount, 2)} EUR → ${units(quote.cryptoAmount, 6)} USDC`)
   console.log(`Gebühr: ${units(quote.fee, 2)} EUR; effektiver Kurs inklusive Gebühren: ${quote.rate} EUR/USDC`)
+  if (!confirm) throw new Error('Nur Quote angezeigt; prepare --confirm erforderlich für Production-Anmeldung und Kaufvorbereitung')
   const externalTransactionId = `wdk-real-${Date.now()}-${randomBytes(8).toString('hex')}`
   // Reserve the ID before buy(): a failed handoff must not lose its tracking ID
   // or let a repeated prepare silently replace the single purchase being tracked.
@@ -151,15 +154,6 @@ async function prepare (fiat, address, fiatAmount, openWidget) {
   console.log(`Widget-URL liegt in ${widgetFile} (enthält eine Anmelde-Session, nicht teilen)`)
   console.log('Nächste Schritte: Widget öffnen, E-Mail im DFX-Fenster eingeben und den E-Mail-Link bestätigen; dann die dort angezeigte Überweisung selbst ausführen.')
   console.log('Danach: node real-purchase.mjs status --watch (mit demselben STATE_DIR).')
-  if (openWidget) {
-    await new Promise((resolve, reject) => {
-      execFile('open', ['-a', 'Google Chrome', widgetUrl], error => {
-        // execFile errors contain the full command, including the session URL.
-        if (error) reject(new Error('Google Chrome konnte nicht geöffnet werden; Widget-URL liegt in der privaten Datei'))
-        else resolve()
-      })
-    })
-  }
 }
 
 async function status (account, fiat, address, watch) {
@@ -202,9 +196,9 @@ async function status (account, fiat, address, watch) {
 
 async function main () {
   const [command, ...flags] = process.argv.slice(2)
-  const allowed = { prepare: '--open', status: '--watch', address: null }
+  const allowed = { prepare: '--confirm', status: '--watch', address: null }
   if (!Object.hasOwn(allowed, command) || flags.length > 1 || flags.some(flag => flag !== allowed[command])) {
-    throw new Error('Aufruf: node real-purchase.mjs prepare [--open] | status [--watch] | address')
+    throw new Error('Aufruf: node real-purchase.mjs prepare [--confirm] | status [--watch] | address')
   }
   const amount = command === 'prepare' ? cents(process.env.AMOUNT_EUR ?? '20') : undefined
   walletSelfTest()
@@ -230,7 +224,7 @@ async function main () {
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error('Ungültige Wallet-Adresse')
   if (command === 'address') { console.log(address); return }
   const fiat = account.getFiatProtocol('dfx')
-  if (command === 'prepare') await prepare(fiat, address, amount, flags.includes('--open'))
+  if (command === 'prepare') await prepare(fiat, address, amount, flags.includes('--confirm'))
   else await status(account, fiat, address, flags.includes('--watch'))
 }
 

@@ -1110,8 +1110,8 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expectInteractions([httpRequest('/v1/asset')])
     })
 
-    test('returns undefined for a null asset description', async () => {
-      const { protocol } = setup({}, { 'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], description: null }]) })
+    test.each([null, ''])('returns undefined for asset description %j', async DUMMY_DESCRIPTION => {
+      const { protocol } = setup({}, { 'GET /v1/asset': response([{ ...DUMMY_ASSETS[0], description: DUMMY_DESCRIPTION }]) })
       const result = await protocol.getSupportedCryptoAssets()
 
       expect(result).toEqual([

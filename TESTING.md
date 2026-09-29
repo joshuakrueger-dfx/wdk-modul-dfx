@@ -4,20 +4,24 @@ This document records how `@dfx.swiss/wdk-protocol-fiat-dfx` was verified, what 
 does not prove. Every result below was produced by running the named command. Nothing is inferred from reading code
 unless it says so.
 
-- **Which code each result belongs to.** The library logic in `src/` last changed in commit `1474599` (code of conduct
-  C005); the later commits `73d4a8d`, `ec9b788` and `c9b2c90` change tests, JSDoc comments, declarations and exports
-  only. Results therefore fall into two groups:
-  - **Current code (re-run on 2026-09-28 against `ec9b788`, and `c9b2c90` for the unit, integration, coverage and
-    mutation layers):** every row of the summary table except the real purchase. The e2e probes consumed a packed copy
-    of the module whose `src/` and `index.js` were compared byte for byte with the repository before the run.
+- **Which code each result belongs to.** Results belong to the explicitly named revisions:
+  - **The commit that adds this sentence (2026-09-29):** lint, unit, integration, coverage and mutation layers — the
+    first four rows of the summary table. It includes two small library fixes made after `27dd624` (a cached signing
+    owner is dropped when sign-in fails; an empty asset description is treated like a missing one).
+  - **Library code `ec9b788` (2026-09-28):** the e2e probes of section 11 and the remaining rows of the summary table.
+    They consumed a packed copy of the module whose `src/` and `index.js` were compared byte for byte with the
+    repository before the run. The two fixes above are not exercised by those probes and were not re-run there.
   - **Earlier code `0be1b6d`:** the real purchase with real money (section 9, 2026-09-28 morning). It was not repeated
     after the review changes of rounds 13–16 (sign-in cache after success, early address check, removal of type guards),
     because repeating it needs new money.
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
 - **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
-- **WDK packages used by the integration tests:** `@tetherto/wdk` 1.0.0-beta.18, `@tetherto/wdk-wallet` 1.0.0-beta.20,
-  `@tetherto/wdk-wallet-evm` 1.0.0-beta.19, `@tetherto/wdk-wallet-evm-erc-4337` 1.0.0-beta.20,
+- **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.19
+  and `@tetherto/wdk-wallet-evm` 1.0.0-beta.19.
+- **WDK packages used by the recorded `e2e/` runs:** `@tetherto/wdk` 1.0.0-beta.18,
+  `@tetherto/wdk-wallet` 1.0.0-beta.20, `@tetherto/wdk-wallet-evm` 1.0.0-beta.19,
+  `@tetherto/wdk-wallet-evm-erc-4337` 1.0.0-beta.20,
   `@tetherto/wdk-wallet-tron` 1.0.0-beta.14, `@tetherto/wdk-wallet-solana` 1.0.0-beta.16,
   `@tetherto/wdk-wallet-btc` 1.0.0-beta.16, `@tetherto/wdk-wallet-spark` 1.0.0-beta.27.
 - **DFX environments:** sandbox `dev.api.dfx.swiss` / `dev.app.dfx.swiss`, production `api.dfx.swiss` / `app.dfx.swiss`,
@@ -28,10 +32,10 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, local | `npm run test:integration` | 27/27 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests | `npm run lint && npm test` | lint output empty; 696/696 tests in 1 suite |
-| Coverage (unit + integration) | `npm run test:coverage` | 723/723 tests in 2 suites; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 41/41 mutations detected across unit and integration suites, each by 1–218 tests |
+| Integration, local | `npm run test:integration` | 30/30 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
+| Unit tests | `npm run lint && npm test` | lint output empty; 697/697 tests in 1 suite |
+| Coverage (unit + integration) | `npm run test:coverage` | 727/727 tests in 2 suites; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 43/43 mutations detected across unit and integration suites, each by 1–218 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -49,8 +53,8 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 
 ## 1. Unit tests
 
-`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 696 tests, all passing;
-`npm run test:coverage` adds the integration suite (723 tests together) and reaches 100 % coverage in all four categories. The
+`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 697 tests, all passing;
+`npm run test:coverage` adds the integration suite (727 tests together) and reaches 100 % coverage in all four categories. The
 session and signer-cache cases need several public calls and live in the integration suites (skill rule R3). All
 unit tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
@@ -60,7 +64,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 41 were detected. For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 43 were detected. For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -307,7 +311,7 @@ request two signatures each.
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
-- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 27/27, see section
+- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 30/30, see section
   11 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.
@@ -316,7 +320,7 @@ request two signatures each.
   turning off the fake's signature check makes the wrong-key test fail; module mutations M02 and M12 fail 2 and 5 of
   the 12. No environment variable is needed; a fresh WDK EVM account is generated per test. Before this change the
   three authenticated tests were skipped unless an account module was supplied, so they never ran in the gate.
-- Live coverage moved entirely to `e2e/live-matrix.mjs`; rerun on 2026-09-28 with the current module against the
+- Live coverage moved entirely to `e2e/live-matrix.mjs`; rerun on 2026-09-28 with `ec9b788` against the
   sandbox: 172/178, the same six expected failures as in section 2.
 - Test files are excluded from `npm run lint` by the Tether scaffold (`standard.ignore`). They were linted
   separately with the `standard` rules and ignore disabled; output empty.
@@ -338,7 +342,7 @@ request two signatures each.
   file per method). All fixed in the following commit; the session scenarios now live in
   `tests/integration/module.test.js`. No fifth pass has been run.
 
-## 11. E2E re-run against the current code (2026-09-28)
+## 11. E2E re-run against `ec9b788` (2026-09-28)
 
 Every probe under `e2e/` that needs no new money was run again against library code `ec9b788` (module copy compared
 byte for byte with `src/` before the run):
@@ -357,6 +361,15 @@ byte for byte with `src/` before the run):
 | `kyc-widget.mjs` | module steps green (sign-in, level 10, level 20, nationality, then quote and widget for the same account); the API log shows the documented boundary: `PUT /v2/kyc` answers 503 after the Sumsub call fails, and the widget loops on *Continue*. The probe's own boundary check stays red because no identification step is created |
 | `safe-deployed.mjs` | 13/13 |
 | Real purchase (section 9) | not repeated; belongs to `0be1b6d` |
+
+After the pull-request review (2026-09-29) the probe scripts gained safeguards: the two full-stack probes refuse
+non-local targets, wallet journeys force the sandbox, `real-purchase.mjs prepare` needs `--confirm`, refuses a seed
+or state file readable by others and no longer passes the session URL to a browser command line, `anvil` is taken
+from `PATH`, and the lifecycle probe derives the API container from the database container. Checked: every changed
+script passes `node --check`; `safe-deployed.mjs` again 13/13; `fullstack.mjs` against `https://api.dfx.swiss` stops
+with "Disposable local stack only"; `real-purchase.mjs prepare` without `--confirm` shows the public quote and stops before any sign-in. The
+local-stack probes were not re-run after these changes, because ports 3020/3021 were then used by another local
+stack.
 
 ## Not covered
 

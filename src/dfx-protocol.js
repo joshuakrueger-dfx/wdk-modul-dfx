@@ -152,7 +152,7 @@ function catalogRow (row, kind) {
   if (typeof row.buyable !== 'boolean' || typeof row.sellable !== 'boolean') throw unexpected()
   if (kind === 'asset') {
     if (/[\s\p{Cc}\p{Cf}]/u.test(textField(row.blockchain))) throw unexpected()
-    if (row.description != null) textField(row.description)
+    if (row.description != null && row.description !== '') textField(row.description)
     if (hasDecimals(row)) assetDecimals(row)
   }
   return { ...row, id: identifier(row.id) }
@@ -426,7 +426,7 @@ export default class DfxProtocol extends FiatProtocol {
       code: asset.name,
       networkCode: asset.blockchain.toLowerCase(),
       decimals: assetDecimals(asset),
-      name: asset.description ?? undefined
+      name: asset.description || undefined
     }))
   }
 
@@ -515,8 +515,13 @@ export default class DfxProtocol extends FiatProtocol {
       blockchain: BLOCKCHAINS.find(chain => chain.toLowerCase() === this._config.network),
       key: this._config.publicKey
     }
-    const auth = record(await this._client._request('/v1/auth', { method: 'POST', body: JSON.stringify(body) }))
-    this.#token = textField(auth.accessToken)
+    try {
+      const auth = record(await this._client._request('/v1/auth', { method: 'POST', body: JSON.stringify(body) }))
+      this.#token = textField(auth.accessToken)
+    } catch (error) {
+      if (evm && knownAddress !== undefined) this.#signers.delete(accountAddress.toLowerCase())
+      throw error
+    }
     if (recovered) this.#signers.set(accountAddress.toLowerCase(), authAddress)
     return { token: this.#token, address: authAddress }
   }

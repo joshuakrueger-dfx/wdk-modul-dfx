@@ -179,6 +179,64 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ])
     })
 
+    test('recovers a changed owner on the login after a cached-owner signature is rejected', async () => {
+      const account = await freshAccount()
+      const nextAccount = await freshAccount(1)
+      const OWNER = (await account.getAddress()).toLowerCase()
+      const NEXT_OWNER = (await nextAccount.getAddress()).toLowerCase()
+      const smart = new DummySmartAccount(account)
+      const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
+
+      await protocol.sell(OPTIONS)
+      smart.account = nextAccount
+      const error = await protocol.buy(OPTIONS).catch(error => error)
+      const result = await protocol.buy(OPTIONS)
+
+      expect(error.constructor).toBe(ProviderError)
+      expect(error.message).toBe('Invalid signature')
+      expect(error.reason).toBe('UNAUTHORIZED')
+      expect(result).toEqual({ buyUrl: BUY_URL_2 })
+      expect(smart.messages).toEqual([
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER),
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(NEXT_OWNER)
+      ])
+      expect(await serverControl('/__events')).toEqual([
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`,
+        `challenge:${OWNER}`, `login:${OWNER}`,
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${NEXT_OWNER}`, `login:${NEXT_OWNER}`
+      ])
+    })
+
+    test.each([
+      ['unauthorized', 'Invalid signature', 'UNAUTHORIZED'],
+      ['missing token', 'Unexpected DFX response', 'INTERNAL_SERVER_ERROR']
+    ])('discards a previously cached owner after %s without retrying that login', async (MODE, EXPECTED_MESSAGE, EXPECTED_REASON) => {
+      const account = await freshAccount()
+      const OWNER = (await account.getAddress()).toLowerCase()
+      const smart = new DummySmartAccount(account)
+      const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
+
+      await protocol.sell(OPTIONS)
+      const initialEvents = await serverControl('/__events')
+      await resetServer({ auth: MODE })
+      const error = await protocol.buy(OPTIONS).catch(error => error)
+      const result = await protocol.buy(OPTIONS)
+
+      expect(error.constructor).toBe(ProviderError)
+      expect(error.message).toBe(EXPECTED_MESSAGE)
+      expect(error.reason).toBe(EXPECTED_REASON)
+      expect(result).toEqual({ buyUrl: BUY_URL_2 })
+      expect(smart.messages).toEqual([
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER),
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER)
+      ])
+      expect([...initialEvents, ...await serverControl('/__events')]).toEqual([
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`,
+        `challenge:${OWNER}`, `login:${OWNER}`,
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`
+      ])
+    })
+
     test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects a cached smart-account delivery before signing or login', async (METHOD, FIELD) => {
       const account = await freshAccount()
       const OWNER = (await account.getAddress()).toLowerCase()

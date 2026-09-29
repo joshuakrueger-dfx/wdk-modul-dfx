@@ -18,7 +18,7 @@ if (dfxWalletPath !== wdkWalletPath) {
 const API = new URL(process.env.DFX_LOCAL_API ?? 'http://localhost:3020').origin
 const APP = new URL(process.env.DFX_LOCAL_APP ?? 'http://localhost:3021').origin
 const DB_CONTAINER = process.env.DFX_LOCAL_DB_CONTAINER ?? 'dfx-e2e-wdk2-db-1'
-const API_CONTAINER = process.env.DFX_LOCAL_API_CONTAINER ?? 'dfx-e2e-wdk2-api-1'
+const API_CONTAINER = process.env.DFX_LOCAL_API_CONTAINER ?? DB_CONTAINER.replace(/-db-1$/, '-api-1')
 const WINDOW = Number(process.env.OBSERVE_MINUTES ?? 15) * 60 * 1000
 assert(Number.isFinite(WINDOW) && WINDOW > 0, 'OBSERVE_MINUTES must be a finite positive number of minutes')
 const selectedScenarios = new Set((process.env.LIFECYCLE_SCENARIOS ?? 'buyA,buyB,sell').split(',').map(value => value.trim()))

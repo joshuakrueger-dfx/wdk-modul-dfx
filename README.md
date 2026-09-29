@@ -70,8 +70,9 @@ real WDK account to generate an authenticated URL. No private keys are embedded.
 ## Configuration
 
 Use `new DfxProtocol(account?, config?)`. Configuration belongs to the instance;
-the library never reads environment variables. `.env.example` is for the example
-application and opt-in integration tests.
+the library never reads environment variables. `.env.example` is for
+`examples/buy.js` and the optional `e2e/` probes. The local integration tests need
+no user-supplied environment variables and run in `npm run test:coverage`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -354,7 +355,9 @@ same fallback.
   signature; if it differs, it requests and signs a new challenge for the owner.
   After successful authentication with a valid access token, the instance caches
   the owner per account address, so later logins need one
-  signature. EOA accounts need only one signature from the start. Recovery is
+  signature. A failed authentication POST or invalid access token clears that
+  account's cached owner; the next login recovers it again, without retrying the
+  failed login. EOA accounts need only one signature from the start. Recovery is
   limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
   Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet
   (case-insensitive). Accounts whose `sign` does not return an EIP-191 signature
@@ -366,8 +369,9 @@ same fallback.
   Arkade/BTC and Firo/FIRO are now tradable using an 8-decimal fallback when the
   API omits `decimals` or supplies null, matching DFX wallets' BTC unit convention
   (1 BTC = 10⁸ sat). API decimals take precedence; other missing-decimal assets
-  remain excluded. The owner-authentication and decimal-fallback changes have
-  not yet been retested against the sandbox.
+  remain excluded. Sandbox runs on 2026-09-28 verified owner authentication and
+  native quotes against `ec9b788`; see [TESTING.md, section 11](TESTING.md#11-e2e-re-run-against-ec9b788-2026-09-28)
+  for results and their scope.
 - Ambiguous tickers without a network are rejected.
 - HTTP 429 and account-state failures provisionally map to `INTERNAL_SERVER_ERROR`.
 - A `recipient` or `refundAddress` differing from the authentication address is rejected.
@@ -437,11 +441,11 @@ node tests/integration/record.js
 Only the recording script contacts the live sandbox and creates a fresh sandbox
 user through `POST /v1/auth`, recording its address and IP at DFX. It stores no
 authentication token and replaces the challenge address with a placeholder.
-After recording, fill the `FILL_AFTER_RECORDING` constants in `module.test.js`
-with independently calculated literal expectations, update this paragraph with
-the actual recording date, and include the fixture with the tests. Missing
-fixtures fail setup; unfilled expectations fail assertions. Expectations must
-never be derived from fixture responses during a test run.
+After recording, update the literal expectations in `tests/integration/module.test.js`
+and the complete catalogs in `tests/integration/fixtures/expected-catalog.json`
+using independently calculated values. Update this paragraph with the actual
+recording date and include the fixtures with the tests. Missing fixtures fail
+setup. Expectations must never be derived from fixture responses during a test run.
 
 Live sandbox and production coverage remains in `e2e/live-matrix.mjs` (catalogs,
 quotes, authentication, widget and details). The 100% coverage gate is measured

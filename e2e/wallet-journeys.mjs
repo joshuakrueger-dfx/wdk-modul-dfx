@@ -13,8 +13,11 @@ process.once('exit', stopOnExit)
 process.once('SIGINT', () => process.exit(130))
 process.once('SIGTERM', () => process.exit(143))
 async function startServer () {
+  const env = { ...process.env, PORT, WALLET_SIM_ENV: 'sandbox' }
+  delete env.WALLET_SIM_SEED_FILE
+  delete env.WALLET_SIM_ORDERS_FILE
   server = fork(new URL('./wallet-sim/server.mjs', import.meta.url), [], {
-    env: { ...process.env, PORT }, stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    env, stdio: ['ignore', 'ignore', 'ignore', 'ipc']
   })
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('Wallet server startup timed out')), 30000)

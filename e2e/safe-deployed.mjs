@@ -60,6 +60,7 @@ async function waitFor (fn, timeout, diagnostic) {
   const deadline = Date.now() + timeout
   while (Date.now() < deadline) {
     stop.signal.throwIfAborted()
+    check(childError?.code !== 'ENOENT', 'Anvil executable not found; install anvil and add it to PATH')
     check(!childError && child.exitCode === null && child.signalCode === null, 'Anvil exited unexpectedly')
     const value = await fn()
     if (value) return value
@@ -107,7 +108,7 @@ async function run () {
       server.once('error', () => reject(new ProbeFailure('ANVIL_PORT is unavailable')))
       server.listen(port, '127.0.0.1', () => server.close(error => error ? reject(error) : resolve()))
     })
-    child = spawn('/opt/homebrew/bin/anvil', [
+    child = spawn('anvil', [
       '--fork-url', 'https://polygon-bor-rpc.publicnode.com',
       '--chain-id', '137', '--host', '127.0.0.1', '--port', String(port), '--silent'
     ], { stdio: 'ignore' })

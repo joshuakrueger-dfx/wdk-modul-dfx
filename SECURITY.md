@@ -19,7 +19,8 @@ Session tokens remain in instance memory and are included in the generated widge
 URL. Do not log, persist or share those URLs. The caller must bind the account to
 the correct constructor network and supply a trusted fetch implementation.
 
-The current prerelease line is `1.0.0-beta.1`. Runtime verification and dependency
-audit are pending before release. Report defects against this line; fixes will be
+The current prerelease line is `1.0.0-beta.1`. Runtime verification results and their
+tested revisions are recorded in [TESTING.md](TESTING.md); a dependency audit is
+pending before release. Report defects against this line; fixes will be
 documented in the changelog. DFX API and hosted widget behavior are external to
 this package and require separate integration verification.

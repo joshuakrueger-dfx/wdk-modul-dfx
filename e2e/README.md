@@ -71,6 +71,40 @@ codes. Full-stack exits nonzero for failed or blocked steps.
 
 ## Commands
 
+### Real purchase script (`real-purchase.mjs`)
+
+This script prepares a real EUR-to-USDC purchase on Arbitrum in production and
+tracks its DFX status and on-chain balance. `AMOUNT_EUR` defaults to `20`; use a
+positive integer or exactly two decimal places (for example `20.50`).
+
+```sh
+# Show the production quote, then exit nonzero without calling buy():
+node real-purchase.mjs prepare
+# Explicitly authorize production authentication and purchase preparation:
+AMOUNT_EUR=20 node real-purchase.mjs prepare --confirm
+node real-purchase.mjs address
+node real-purchase.mjs status
+node real-purchase.mjs status --watch
+```
+
+`prepare --confirm` authenticates with DFX, can create a production user and
+creates a session URL. Open the URL from the private `widget-url.txt` file
+yourself in the browser; there is no automatic browser-opening option. Complete
+the email verification in the widget and make the actual bank transfer yourself
+using the payment instructions shown there. This uses real money; the script
+does not execute the bank transfer.
+
+`STATE_DIR` defaults to `~/.wdk-dfx-real`; use the same directory for every command
+for this purchase. The directory uses mode `0700`. `prepare` creates `seed.txt`
+if needed, including when run without `--confirm`. With confirmation it also
+creates `state.json` (wallet, quote and tracking ID) and `widget-url.txt` (active
+login session). Files are created with mode `0600`; existing files are rejected
+on read if group or other permissions are set. The script never prints the seed.
+Keep the seed and session file private and do not share or upload them.
+Existing purchase state is not overwritten. `address` prints the wallet address;
+`status` checks once, while `status --watch` polls every minute until completion
+with a positive USDC balance, failure or a lookup/balance error.
+
 ### Live chain matrix
 
 ```sh
