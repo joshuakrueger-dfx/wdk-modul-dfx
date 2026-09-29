@@ -179,18 +179,18 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     }
     const { signatures, addresses, result: EXPECTED_RESULT, requests: EXPECTED_REQUESTS } = EXPECTATIONS[METHOD]
     test.each(NATIVE_ASSETS.flatMap(([NETWORK, CRYPTO_ASSET]) => [METHOD].flatMap(CASE_METHOD =>
-      [[null, 125000000n], [undefined, 125000000n], [6, 1250000n]].map(([DUMMY_DECIMALS, CRYPTO_AMOUNT]) => [NETWORK, CRYPTO_ASSET, CASE_METHOD, DUMMY_DECIMALS, CRYPTO_AMOUNT])
-    )))('%s/%s %s uses resolved decimals %s in request and response amounts', async (NETWORK, CRYPTO_ASSET, CASE_METHOD, DUMMY_DECIMALS, CRYPTO_AMOUNT) => {
+      [[null, 125000000n, 250000000n], [undefined, 125000000n, 250000000n], [6, 1250000n, 2500000n]].map(([DUMMY_DECIMALS, CRYPTO_AMOUNT, EXPECTED_CRYPTO_AMOUNT]) => [NETWORK, CRYPTO_ASSET, CASE_METHOD, DUMMY_DECIMALS, CRYPTO_AMOUNT, EXPECTED_CRYPTO_AMOUNT])
+    )))('%s/%s %s uses resolved decimals %s in request and response amounts', async (NETWORK, CRYPTO_ASSET, CASE_METHOD, DUMMY_DECIMALS, CRYPTO_AMOUNT, EXPECTED_CRYPTO_AMOUNT) => {
       const { protocol } = setup({ network: NETWORK }, {
         'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], blockchain: NETWORK, name: CRYPTO_ASSET, decimals: DUMMY_DECIMALS }]),
-        'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 1.25, fees: { total: 1 } }),
-        'PUT /v1/sell/quote': response({ isValid: true, amount: 1.25, estimatedAmount: 100, feesTarget: { total: 1 } })
+        'PUT /v1/buy/quote': response({ isValid: true, amount: 100, estimatedAmount: 2.5, fees: { total: 1 } }),
+        'PUT /v1/sell/quote': response({ isValid: true, amount: 2.5, estimatedAmount: 100, feesTarget: { total: 1 } })
       })
       const EXPECTED_RESULTS = {
         buy: widget('buy', { asset: CRYPTO_ASSET, blockchain: NETWORK, amount: '1.25', crypto: true }),
         sell: widget('sell', { asset: CRYPTO_ASSET, blockchain: NETWORK, amount: '1.25', crypto: true }),
-        quoteBuy: { cryptoAmount: CRYPTO_AMOUNT, fiatAmount: 10000n, fee: 100n, rate: '80' },
-        quoteSell: { cryptoAmount: CRYPTO_AMOUNT, fiatAmount: 10000n, fee: 100n, rate: '80' }
+        quoteBuy: { cryptoAmount: EXPECTED_CRYPTO_AMOUNT, fiatAmount: 10000n, fee: 100n, rate: '40' },
+        quoteSell: { cryptoAmount: EXPECTED_CRYPTO_AMOUNT, fiatAmount: 10000n, fee: 100n, rate: '40' }
       }
       const AUTH = [CHALLENGE_REQUEST, httpRequest('/v1/auth', 'POST', JSON.stringify({ address: DUMMY_ADDRESS, signature: 'dummy-signature', blockchain: NETWORK }))]
       const REQUESTS = {
@@ -1288,12 +1288,16 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test.each([undefined, 10])('aborts requests at the configured deadline %s', async TIMEOUT => {
       jest.useFakeTimers()
+      const SET_TIMEOUT = globalThis.setTimeout
+      timerMock.mockImplementation((...args) => SET_TIMEOUT(...args))
+      jest.spyOn(globalThis, 'setTimeout').mockImplementation(timerMock)
       const fetch = transportMock.mockImplementation((url, init) => new Promise((resolve, reject) => {
         const signal = init.signal
         signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
       }))
       const protocol = new DfxProtocol(undefined, { fetch, timeout: TIMEOUT })
       const pending = failure(protocol.getSupportedCountries(), ProviderError, 'DFX request timed out', 'REQUEST_TIMEOUT')
+      expect(timerMock).toHaveBeenCalledWith(expect.any(Function), TIMEOUT ?? 30000)
       await jest.advanceTimersByTimeAsync(TIMEOUT ?? 30000)
       await pending
       expect(jest.getTimerCount()).toBe(0)

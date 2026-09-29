@@ -157,9 +157,10 @@ build the widget URL. A prior quote can surface limits before opening the widget
 only confirmation in the widget is binding. `recipient` and `refundAddress`
 default to the authentication address: the signing owner EOA for ERC-4337,
 otherwise the account address. Explicit overrides must match that resolved address.
-For non-EVM networks and cached EVM signers, the check happens before authentication,
-without a signature or authentication request. For uncached EVM signers, it happens
-after authentication, without an extra signing round for validation.
+For non-EVM networks and cached EVM signers matching the account address (EOAs),
+the check happens before authentication, without a signature or authentication
+request. For ERC-4337 accounts and uncached EVM signers, it happens after
+authentication, without an extra signing round for validation.
 If both addresses match `0x` followed by exactly
 40 hexadecimal digits, comparison ignores letter case to accept EVM checksum
 spelling. All other addresses must match exactly.

@@ -623,7 +623,7 @@ export default class DfxProtocol extends FiatProtocol {
     const address = await this._accountCall(direction, 'getAddress')
     const field = direction === 'buy' ? 'recipient' : 'refundAddress'
     const knownAddress = this.#knownAuthAddress(address)
-    if (knownAddress !== undefined) this.#validateAddress(options, field, address, knownAddress)
+    if (knownAddress !== undefined && sameAddress(knownAddress, address)) this.#validateAddress(options, field, address, knownAddress)
     const { token, address: authAddress } = await this._authenticate(direction, address)
     this.#validateAddress(options, field, address, authAddress)
     const url = new URL(`/${direction}`, this._app)

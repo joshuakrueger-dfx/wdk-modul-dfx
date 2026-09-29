@@ -179,7 +179,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ])
     })
 
-    test('recovers a changed owner on the login after a cached-owner signature is rejected', async () => {
+    test('accepts the new owner as recipient on the login after a cached-owner signature is rejected', async () => {
       const account = await freshAccount()
       const nextAccount = await freshAccount(1)
       const OWNER = (await account.getAddress()).toLowerCase()
@@ -189,8 +189,8 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
       await protocol.sell(OPTIONS)
       smart.account = nextAccount
-      const error = await protocol.buy(OPTIONS).catch(error => error)
-      const result = await protocol.buy(OPTIONS)
+      const error = await protocol.buy({ ...OPTIONS, recipient: NEXT_OWNER }).catch(error => error)
+      const result = await protocol.buy({ ...OPTIONS, recipient: NEXT_OWNER })
 
       expect(error.constructor).toBe(ProviderError)
       expect(error.message).toBe('Invalid signature')
@@ -237,7 +237,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ])
     })
 
-    test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects a cached smart-account delivery before signing or login', async (METHOD, FIELD) => {
+    test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects a cached smart-account delivery after owner authentication', async (METHOD, FIELD) => {
       const account = await freshAccount()
       const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummySmartAccount(account)
@@ -249,9 +249,10 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expect(error.constructor).toBe(ValueError)
       expect(error.message).toBe(`DFX delivers to the signing owner address ${OWNER} for this account; ${FIELD} must match it and the smart-account address cannot be used as ${FIELD}`)
       expect(error.reason).toBeUndefined()
-      expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER)])
+      expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER)])
       expect(await serverControl('/__events')).toEqual([
-        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT,
+        `challenge:${OWNER}`, `login:${OWNER}`
       ])
     })
 
@@ -325,6 +326,24 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expect(await serverControl('/__events')).toEqual([
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${FOREIGN_OWNER}`, `login:${FOREIGN_OWNER}`,
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`
+      ])
+    })
+
+    test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects mismatched delivery for a cached EOA before signing or login', async (METHOD, FIELD) => {
+      const account = await freshAccount()
+      const ADDRESS = await account.getAddress()
+      const tracked = new DummySmartAccount(account, ADDRESS)
+      const protocol = new DfxProtocol(tracked, LOCAL_CONFIG)
+
+      await protocol.getTransactionDetail(UID).catch(() => {})
+      const error = await protocol[METHOD]({ ...OPTIONS, [FIELD]: DUMMY_SMART_ADDRESS }).catch(error => error)
+
+      expect(error.constructor).toBe(ValueError)
+      expect(error.message).toBe(`${FIELD} must match the account address`)
+      expect(error.reason).toBeUndefined()
+      expect(tracked.messages).toEqual([challengeMessage(ADDRESS)])
+      expect(await serverControl('/__events')).toEqual([
+        `challenge:${ADDRESS}`, `login:${ADDRESS}`, DETAIL_EVENT
       ])
     })
 

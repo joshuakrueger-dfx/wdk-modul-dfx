@@ -5,12 +5,14 @@ does not prove. Every result below was produced by running the named command. No
 unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
-  - **The commit that adds this sentence (2026-09-29):** lint, unit, integration, coverage and mutation layers — the
-    first four rows of the summary table. It includes two small library fixes made after `27dd624` (a cached signing
-    owner is dropped when sign-in fails; an empty asset description is treated like a missing one).
+  - **The last commit that changes this sentence (2026-09-29):** lint, unit, integration, coverage and mutation layers —
+    the first four rows of the summary table. It includes three small library fixes made after `27dd624`: a cached
+    signing owner is dropped when sign-in fails; an empty asset description is treated like a missing one; the check of
+    `recipient`/`refundAddress` before sign-in only runs when the sign-in address is the account address itself
+    (non-EVM or EOA), so a stale cached owner of an ERC-4337 account cannot block its own renewal.
   - **Library code `ec9b788` (2026-09-28):** the e2e probes of section 11 and the remaining rows of the summary table.
     They consumed a packed copy of the module whose `src/` and `index.js` were compared byte for byte with the
-    repository before the run. The two fixes above are not exercised by those probes and were not re-run there.
+    repository before the run. The three fixes above are not exercised by those probes and were not re-run there.
   - **Earlier code `0be1b6d`:** the real purchase with real money (section 9, 2026-09-28 morning). It was not repeated
     after the review changes of rounds 13–16 (sign-in cache after success, early address check, removal of type guards),
     because repeating it needs new money.
@@ -32,10 +34,10 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, local | `npm run test:integration` | 30/30 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
+| Integration, local | `npm run test:integration` | 32/32 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
 | Unit tests | `npm run lint && npm test` | lint output empty; 697/697 tests in 1 suite |
-| Coverage (unit + integration) | `npm run test:coverage` | 727/727 tests in 2 suites; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 43/43 mutations detected across unit and integration suites, each by 1–218 tests |
+| Coverage (unit + integration) | `npm run test:coverage` | 729/729 tests in 2 suites; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 46/46 mutations detected across unit and integration suites, each by 1–609 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -54,7 +56,7 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 ## 1. Unit tests
 
 `npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 697 tests, all passing;
-`npm run test:coverage` adds the integration suite (727 tests together) and reaches 100 % coverage in all four categories. The
+`npm run test:coverage` adds the integration suite (729 tests together) and reaches 100 % coverage in all four categories. The
 session and signer-cache cases need several public calls and live in the integration suites (skill rule R3). All
 unit tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
@@ -64,7 +66,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 43 were detected. For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 46 were detected. For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -311,7 +313,7 @@ request two signatures each.
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
-- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 30/30, see section
+- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 32/32, see section
   11 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.

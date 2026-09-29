@@ -11,7 +11,10 @@ export function response (data, status = 200) {
 // All HTTP data is compared verbatim; the signal is checked separately.
 export function expectRequests (calls, expected, aborted = false) {
   expect(calls.map(([url, { signal, ...init }]) => [url, init])).toEqual(expected)
-  for (const [, { signal }] of calls) expect(signal.aborted).toBe(aborted)
+  for (const [, { signal }] of calls) {
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal.aborted).toBe(aborted)
+  }
 }
 
 export function httpRequest (path, method = 'GET', body, token, environment = 'production') {

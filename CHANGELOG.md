@@ -36,7 +36,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Follow C005 by trusting declared argument and account return types; retain value rules and external API response validation.
 - Cache recovered EVM signers only after successful authentication; reject
-  mismatched known delivery addresses before signing or authentication requests.
+  mismatched delivery addresses before signing or authentication requests only
+  for non-EVM accounts and cached EOA signers matching the account address.
+  Validate ERC-4337 delivery addresses after authentication so a stale owner
+  cache can be cleared by a rejected login and recovered on the next call.
 - Normalize null asset descriptions to undefined and align JSDoc with the
   manually maintained declarations and parent method descriptions.
 - Clarify ERC-4337 owner gas, address visibility, transaction-detail network
