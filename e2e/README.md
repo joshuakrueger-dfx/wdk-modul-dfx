@@ -135,6 +135,9 @@ key. A URL override determines the actual target environment; `DFX_ENV` selects
 only the default filename. Use production URL input only with explicit
 `DFX_ENV=production`.
 
+The URL file must be a regular file owned by the current user with permissions
+`0600`. Reading rejects symlinks and files with any group/other permissions.
+
 ### Native-chain quotes
 
 Lightning, Arkade and Firo, without wallet authentication:
@@ -207,7 +210,9 @@ DFX sandbox mode. Smart-account balances belong to the displayed smart-account
 address, while DFX purchases use its owner address as noted in the simulator.
 
 If `WALLET_SIM_ORDERS_FILE` is set, its parent directory must already exist.
-Orders are saved atomically with permissions `0600` and loaded at startup. Only
+Orders are saved atomically with permissions `0600` and loaded at startup.
+Existing files must be regular files owned by the current user; reading rejects
+symlinks and any group/other permissions. A missing file is allowed. Only
 order metadata is persisted (ID, direction, asset, chain/network, amount and unit,
 time, environment and wallet address); session URLs are never stored. The list
 is filtered to the active environment and wallet accounts. Reopen the same wallet
@@ -300,6 +305,10 @@ The AML job needs about ten minutes per decision, so a full run takes 60–90
 minutes. The environment step seeds a numeric referral code when none exists (see
 `TESTING.md` for the backend finding behind it). Use a fresh IBAN per scenario: DFX
 allows an active IBAN on one account only, and the script generates valid ones.
+
+If a required milestone is not reached (compliance Pass, an AML decision within
+the observation window, or BuyFiat input assignment), the lifecycle probe records
+`not_reached` as a failed step, logs `FAIL` with the reason, and exits nonzero.
 
 ### KYC in the widget
 

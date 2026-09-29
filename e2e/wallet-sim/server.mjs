@@ -73,13 +73,17 @@ if (seedFile) await preparedSeed()
 const ORDER_FIELDS = ['id', 'direction', 'asset', 'chain', 'network', 'amount', 'amountMode', 'fiatCurrency', 'time', 'environment', 'address']
 let savedOrders = []
 if (ordersFile) {
+  let file
   try {
-    const rows = JSON.parse(await readFile(ordersFile, 'utf8'))
+    file = await open(ordersFile, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) throw new Error()
+    const rows = JSON.parse(await file.readFile('utf8'))
     if (!Array.isArray(rows) || rows.some(row => !row || ORDER_FIELDS.some(key => typeof row[key] !== 'string') || !['sandbox', 'production'].includes(row.environment) || !CASES.some(c => c.chain === row.chain && c.network === row.network) || !['buy', 'sell'].includes(row.direction) || !['fiat', 'crypto'].includes(row.amountMode) || !/^\d+(?:\.\d+)?$/.test(row.amount) || !Number.isFinite(Date.parse(row.time)))) throw new Error()
     savedOrders = rows.map(row => Object.fromEntries(ORDER_FIELDS.map(key => [key, row[key]])))
   } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error('WALLET_SIM_ORDERS_FILE konnte nicht geladen werden: gültige Auftragsdatei erforderlich.')
-  }
+    if (error.code !== 'ENOENT') throw new Error('WALLET_SIM_ORDERS_FILE konnte nicht geladen werden: gültige eigene reguläre Auftragsdatei mit Rechten 0600 erforderlich (keine Symlinks).')
+  } finally { await file?.close() }
 }
 async function saveOrder (order) {
   const rows = [Object.fromEntries(ORDER_FIELDS.map(key => [key, order[key]])), ...savedOrders]

@@ -345,8 +345,8 @@ function database(s) {
 function halt(s, event, reason) {
   const evidence = { time: new Date().toISOString(), event, outcome: 'not_reached', reason }
   s.halted.push(evidence)
-  console.log(`OK ${s.label}: ${event}: backend stopping point: ${reason}`)
-  results.steps.push({ name: `${s.label}: ${event}`, ok: true, evidence })
+  console.log(`FAIL ${s.label}: ${event}: backend stopping point: ${reason}`)
+  results.steps.push({ name: `${s.label}: ${event}`, ok: false, evidence })
   persist()
   return undefined
 }

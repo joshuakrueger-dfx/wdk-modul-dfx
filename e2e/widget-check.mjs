@@ -1,5 +1,5 @@
 // Opens module-generated widget URLs in headless Chromium and records what a user would see.
-import { mkdirSync, readFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
@@ -8,7 +8,15 @@ const ENV = process.env.DFX_ENV === 'production' ? 'production' : 'sandbox'
 const OUT = new URL('./out/', import.meta.url)
 mkdirSync(OUT, { recursive: true })
 const source = process.env.URLS ?? fileURLToPath(new URL(`e2e-urls-${ENV}.json`, OUT))
-const urls = JSON.parse(readFileSync(source, 'utf8'))
+let fd, urls
+try {
+  fd = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW)
+  const stat = fstatSync(fd)
+  if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) throw new Error()
+  urls = JSON.parse(readFileSync(fd, 'utf8'))
+} catch {
+  throw new Error('URL file could not be loaded: valid JSON in an owned regular file with permissions 0600 required (no symlinks).')
+} finally { if (fd !== undefined) closeSync(fd) }
 const sessions = Object.values(urls).map(url => new URL(url).searchParams.get('session')).filter(Boolean)
 const masked = value => sessions.reduce((text, session) => text.split(session).join('[REDACTED]'), String(value)).replace(/([?&]session=)[^&\s"<>]+/g, '$1[REDACTED]')
   .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED-JWT]')
