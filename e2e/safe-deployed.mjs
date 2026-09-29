@@ -28,17 +28,21 @@ function check (condition, message) {
   if (!condition) throw new ProbeFailure(message)
 }
 
+function maskRpcText (text) {
+  if (forkUrl) {
+    text = text.split(forkUrl).join('[RPC URL]')
+      .split(forkUrl.replace(/^https:\/\//i, '')).join('[RPC URL]')
+  }
+  return text.replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]')
+}
+
 function anvilDiagnostic (message) {
   let text = anvilStderr
   if (anvilStderrTruncated) {
     const newline = text.indexOf('\n')
     text = newline === -1 ? '' : text.slice(newline + 1)
   }
-  if (forkUrl) {
-    text = text.split(forkUrl).join('[RPC URL]')
-      .split(forkUrl.replace(/^https:\/\//i, '')).join('[RPC URL]')
-  }
-  const tail = text.replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').trim().split(/\r?\n/).slice(-10).join('\n')
+  const tail = maskRpcText(text).trim().split(/\r?\n/).slice(-10).join('\n')
   return tail ? `${message}\nAnvil stderr (last 10 lines):\n${tail}` : message
 }
 
@@ -70,8 +74,8 @@ async function rpc (method, params = []) {
   check(response.ok, `RPC HTTP failure for ${method}: ${response.status}`)
   const body = await response.json()
   if (body.error) {
-    const code = String(body.error.code).replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]')
-    const message = String(body.error.message ?? '').replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').slice(0, 200)
+    const code = maskRpcText(String(body.error.code))
+    const message = maskRpcText(String(body.error.message ?? '')).slice(0, 200)
     throw new ProbeFailure(`RPC rejected ${method}: ${code} ${message}`)
   }
   check(Object.hasOwn(body, 'result'), `RPC rejected ${method}`)
@@ -210,7 +214,7 @@ async function run () {
           lastError = undefined
           return receipt
         } catch (error) {
-          lastError = String(error?.message ?? error).replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').slice(0, 300)
+          lastError = maskRpcText(String(error?.message ?? error)).slice(0, 300)
           return false
         }
       }, 60000, () => lastError ? `Deployment receipt timed out; last RPC error: ${lastError}` : 'Deployment receipt timed out')
