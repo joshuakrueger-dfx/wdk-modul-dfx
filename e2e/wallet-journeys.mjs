@@ -68,10 +68,13 @@ async function waitForState (context, description, predicate) {
     const result = await context.waitForFunction(predicate, null, { timeout: STATE_TIMEOUT })
     await result.dispose()
   } catch (error) {
-    throw new Error(`${description}: ${error.message}`)
+    const lastText = await context.evaluate(() => document.body?.innerText ?? '')
+      .catch(e => `page read failed: ${e.message}`)
+    throw new Error(`${description}: ${error.message}; last text: ${JSON.stringify(clean(lastText))}`)
   }
 }
 
+const results = []
 const browser = await chromium.launch()
 try {
   for (const j of JOURNEYS.filter(j => !process.argv[2] || j.name === process.argv[2])) {
@@ -124,12 +127,8 @@ try {
           if (!dfxFrame) throw new Error('DFX checkout frame is unavailable')
           const heading = j.direction === 'buy' ? 'Buy' : 'Sell'
           try {
-            const result = await dfxFrame.waitForFunction(expectedHeading => {
-              const text = document.body?.innerText.trim() ?? ''
-              return location.href !== 'about:blank' && text &&
-                !/^Loading\s*[.…]*$/i.test(text) && new RegExp(`\\b${expectedHeading}\\b`).test(text)
-            }, heading, { timeout: STATE_TIMEOUT })
-            await result.dispose()
+            await dfxFrame.getByText(heading, { exact: true }).first()
+              .waitFor({ state: 'visible', timeout: STATE_TIMEOUT })
           } catch (error) {
             const lastText = await dfxFrame.evaluate(() => document.body?.innerText ?? '')
               .catch(e => `frame read failed: ${e.message}`)
@@ -161,6 +160,7 @@ try {
           await shot('x-stop').catch(() => {})
         }
         out.pageErrors = errors.length
+        results.push(out)
         console.log(JSON.stringify(out, null, 1))
       } finally {
         clearTimeout(timeout)
@@ -170,6 +170,7 @@ try {
       await stopServer()
     }
   }
+  if (!results.length || results.some(out => Object.hasOwn(out, 'stop') || out.pageErrors > 0)) process.exitCode = 1
 } finally {
   await stopServer()
   await browser.close()

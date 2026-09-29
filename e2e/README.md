@@ -64,9 +64,11 @@ on subsequent runs, except for the full-stack screenshots with unique run IDs.
 
 These are the original exploratory probes, not a uniform assertion suite. The
 matrix records failed steps but exits zero; native quotes report `ERR` inline;
-the differential prints mismatch counts; the journey runner records a `stop`
-(including the intended too-low-amount case). Inspect their output, not just exit
-codes. Full-stack exits nonzero for failed or blocked steps.
+the differential prints mismatch counts. Inspect these probes' output, not just
+exit codes. The journey runner exits nonzero if a journey records a `stop` or
+page errors. In sandbox, `eth-too-low` is an ordinary flow because 1 EUR is
+accepted; production rejects that amount. Full-stack exits nonzero for failed
+or blocked steps.
 
 ## Commands
 
@@ -160,7 +162,7 @@ node signature-diff.mjs > out/signature-diff.log 2>&1
 ### Wallet journeys
 
 Runs all seven journeys, or one by name. Each journey gets a fresh server process
-and wallet state, with a 200-second browser-page timeout and guaranteed server
+and wallet state, with a 600-second browser-page timeout (ten times the state timeout) and guaranteed server
 cleanup on ordinary completion or failure. SIGINT/SIGTERM also terminate the
 owned server. No shell runner or process-name killing is used.
 

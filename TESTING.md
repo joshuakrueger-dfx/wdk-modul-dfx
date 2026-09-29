@@ -46,7 +46,7 @@ unless it says so.
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
 | Widget as the user sees it | `cd e2e && node widget-check.mjs` | the widget opens signed in, amount/asset/network prefilled, in sandbox and production |
-| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 6/7 journeys reach the DFX widget, 0 page errors; the Solana journey fails whenever the random Solana address starts with `3` (DFX backend issue, section 12) |
+| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 7/7 journeys reach the DFX page title (`Buy`/`Sell`), 0 page errors, exit 0 (latest run, section 12); the Solana journey fails whenever its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
 | After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps (second run; the first stopped at a transient local `fetch failed`, section 12) |
 | Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Lightning, Arkade, Firo listed and quoted in sandbox and production |
 | Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
@@ -134,7 +134,9 @@ continues with its own steps: KYC (sandbox) or e-mail (production) for buying, I
 
 `e2e/wallet-journeys.mjs` drives the simulated wallet app in `e2e/wallet-sim/` (phone layout, DFX opened in an in-app
 browser frame). Each journey creates a wallet, taps Buy or Sell, reads the live offer, continues to DFX and checks the
-order list. All 7 passed with 0 page errors:
+order list. The table is from the first run (2026-09-24, `0be1b6d`) and shows what each journey sees once it
+reaches DFX. The Solana journey creates a random wallet: if its address starts with
+`1` or `3` (about 6 %), DFX rejects sign-in (backend issue, section 12). Current run results are in sections 11 and 12.
 
 | Journey | Offer shown to the user | DFX window |
 | --- | --- | --- |
@@ -398,7 +400,7 @@ for byte with `src/` before the run). The local stack ran as its own project on 
 | `live-matrix.mjs`, sandbox | 172/178, the same six expected failures as in section 2 |
 | `live-matrix.mjs`, production | 175/179, the same four failures as in section 2 |
 | `widget-check.mjs`, sandbox and production | 4/4 each: widget opens signed in with amount, asset and network prefilled |
-| `wallet-journeys.mjs` | first run 0/7 and 2/7: the runner waited fixed seconds and clicked before the wallet existed under load (about 1 100 processes); now it waits for observable states. Then 6/7 reach the DFX widget (`Buy`/`Sell` heading loaded); the Solana sell journey stops at DFX sign-in (see below). In the sandbox a 1 EUR purchase is accepted (production rejects it with `AmountTooLow`, limit 10.57 EUR), so `eth-too-low` is an ordinary flow there |
+| `wallet-journeys.mjs` | the first two runs reached 0/7 and 2/7 respectively: the runner waited fixed seconds and clicked before the wallet existed under load (about 1 100 processes); now it waits for observable states. Third run 6/7: the Solana sell journey stopped at DFX sign-in (see below). After the review of this section the runner exits nonzero when a journey stops or has page errors, and it waits for an element whose whole text is `Buy`/`Sell` (the DFX page title; the widget has no heading role) instead of the word anywhere in the page. Fourth run 7/7, exit 0, 0 page errors (that run's Solana address started with `D`); with the expected titles swapped (a buy journey waiting for `Sell`) the journey stops after 60 s and the runner exits 1. The wait confirms the title only: in the Spark journey the rest of the page was still loading when the text was read. In the sandbox a 1 EUR purchase is accepted (production rejects it with `AmountTooLow`, limit 10.57 EUR), so `eth-too-low` is an ordinary flow there |
 | `fullstack.mjs` | first run stopped at "sell: bank account via factory API" with `fetch failed` after 3 ms (request never reached the proxy; the same request in isolation returned 201; cause not determined, possibly the 256 open-file limit after 200 `docker exec` calls); second run 29/29 |
 | `fullstack-processing.mjs` | 24 steps OK; sell matching as in section 6; the two six-minute observation steps red as in section 11 |
 | `fullstack-lifecycle.mjs` (`OBSERVE_MINUTES=15`) | 56 steps OK, 2 red: the crypto payout for buy A and the fiat bank execution for the sale are not prepared by the local stack ("no positive crypto output and fee", "no executable fiat output"; the local stack has no liquidity rules). AML `Pass` for buy A and the sale, `Failed` → `Returned` for buy B; module status matched all seven DFX states observed. `completed` is shown only by the real purchase |
@@ -418,8 +420,9 @@ starts with `3` with 400 "Invalid signature". Sandbox, fresh throwaway accounts:
 rejected, 5 of 5 others accepted; the rejected signatures verify locally (ed25519) and are sent unchanged. Cause in
 `DFXswiss/backend` (`origin/develop`): `bitcoinAddressFormat = '([13]|bc1)[a-zA-HJ-NP-Z0-9]{25,62}|…'` also matches
 43–44-character Base58 addresses beginning with `1` or `3`; `CryptoService` detects Bitcoin before Solana and
-`verifySignature` uses the detected chain (the `blockchain` field is only used for EVM). Roughly 10–15 % of random
-Solana wallets are affected. Production uses the same code; it was not tested there. The module cannot work around it.
+`verifySignature` uses the detected chain (the `blockchain` field is only used for EVM). About 6 % of random Solana
+addresses start with `1` or `3` (5.8 % with `3` and 0.4 % with `1` in a simulation of 200 000 random keys).
+Production uses the same code; it was not tested there. The module cannot work around it.
 
 ## Not covered
 
