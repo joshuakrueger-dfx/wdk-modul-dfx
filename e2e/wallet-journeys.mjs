@@ -74,7 +74,7 @@ const JOURNEYS = [
   { name: 'eth-too-low', smart: false, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '1' }
 ]
 const tid = id => `[data-testid="${id}"], #${id}`
-const masked = s => String(s ?? '').replace(/([?&]session=)[^&\s"<>]+/g, '$1[REDACTED]').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED-JWT]')
+const masked = s => String(s ?? '').replace(/((?:session|access_token|token)(?:=|%3D))[^&\s"<>#]*/gi, '$1[REDACTED]').replace(/Bearer\s+[^\s"<>]+/gi, 'Bearer [REDACTED]').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED-JWT]')
 const clean = s => masked(s).replace(/\s+/g, ' ').trim().slice(0, 300)
 const STATE_TIMEOUT = 60000
 async function waitForState (context, description, predicate) {
@@ -132,7 +132,7 @@ try {
           await shot('2-offer')
 
           const cont = page.locator(tid('continue-dfx'))
-          if (await cont.isDisabled().catch(() => true)) { out.continue = 'disabled'; throw new Error('continue disabled (expected for error cases)') }
+          if (await cont.isDisabled().catch(() => true)) { out.continue = 'disabled'; throw new Error('Continue to DFX is disabled') }
           await cont.click()
           await waitForState(page, 'DFX checkout frame did not open', () =>
             document.querySelector('#browser-sheet')?.hidden === false && document.querySelector('#browser-frame')?.getAttribute('src'))

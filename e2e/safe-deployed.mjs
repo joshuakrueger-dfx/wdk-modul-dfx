@@ -86,7 +86,7 @@ async function waitFor (fn, timeout, diagnostic) {
     if (value) return value
     await delay(250, undefined, { signal: stop.signal })
   }
-  throw new ProbeFailure(anvilDiagnostic(diagnostic))
+  throw new ProbeFailure(anvilDiagnostic(typeof diagnostic === 'function' ? diagnostic() : diagnostic))
 }
 
 async function stopAnvil () {
@@ -197,9 +197,13 @@ async function run () {
     let hash
     try {
       hash = await rpc('eth_sendTransaction', [{ from: owner, to: smartAccount.factoryAddress, data: smartAccount.factoryData, value: '0x0', gas: '0x7a1200' }])
+      let lastError
       const receipt = await waitFor(async () => {
-        try { return await rpc('eth_getTransactionReceipt', [hash]) } catch { return false }
-      }, 60000, 'Deployment receipt timed out')
+        try { return await rpc('eth_getTransactionReceipt', [hash]) } catch (error) {
+          lastError = String(error?.message ?? error).replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').slice(0, 300)
+          return false
+        }
+      }, 60000, () => lastError ? `Deployment receipt timed out; last RPC error: ${lastError}` : 'Deployment receipt timed out')
       check(receipt.status === '0x1', 'Safe deployment transaction reverted')
     } finally {
       await rpc('anvil_stopImpersonatingAccount', [owner])

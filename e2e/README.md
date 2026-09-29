@@ -162,8 +162,10 @@ node signature-diff.mjs > out/signature-diff.log 2>&1
 ### Wallet journeys
 
 Runs all seven journeys, or one by name. Each journey gets a fresh server process
-and wallet state, with a 600-second browser-page timeout (ten times the state timeout) and guaranteed server
-cleanup on ordinary completion or failure. SIGINT/SIGTERM also terminate the
+and wallet state, with a 600-second browser-page timeout (ten times the state timeout).
+On ordinary completion or failure, cleanup sends SIGTERM, then SIGKILL after
+5 seconds if needed. If the server still has not exited after another 5 seconds,
+the runner reports its PID and exits with a nonzero status. SIGINT/SIGTERM also terminate the
 owned server. No shell runner or process-name killing is used.
 
 ```sh
