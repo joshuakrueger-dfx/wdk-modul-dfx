@@ -11,7 +11,7 @@ import {
 } from '@tetherto/wdk-wallet/protocols'
 import DfxProtocol, { DfxProtocol as NamedDfxProtocol, IFiatProtocol } from '../index.js'
 import * as publicApi from '../index.js'
-import { expectRequests, failure, httpRequest, response } from './helpers.js'
+import { expectRequests, failure, failureSync, httpRequest, response } from './helpers.js'
 
 const fetchMock = jest.fn()
 const getAddressMock = jest.fn()
@@ -121,11 +121,11 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     const fetch = fetchMock.mockReset().mockImplementation(async (url, init) => {
       const route = Object.keys(routes).find(route => url === base + route.slice(route.indexOf(' ') + 1) && init.method === route.slice(0, route.indexOf(' ')))
       const value = routes[route]
-      if (value === undefined) throw new ProviderError('Unexpected test route', { reason: ProviderErrorReason.INTERNAL_SERVER_ERROR })
+      if (value === undefined) throw new ProviderError('Unexpected test route', { reason: 'INTERNAL_SERVER_ERROR' })
       const result = typeof value === 'function' ? await value(init) : value
       return result
     })
-    return { protocol: new DfxProtocol(account, { fetch, ...config }), fetch, account, routes }
+    return { protocol: new DfxProtocol(account, { fetch, ...config }), routes }
   }
 
   const OWNER_ADDRESS = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
@@ -565,14 +565,14 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       [0, -1].map(DUMMY_VALUE => [DIRECTION, FIELD, DUMMY_VALUE])
     )))('rejects nonpositive %s response %s = %s', async (DIRECTION, FIELD, DUMMY_VALUE) => {
       const { protocol } = setup({}, { [`PUT /v1/${DIRECTION}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 100, [FIELD]: DUMMY_VALUE }) })
-      await failure(protocol[DIRECTION === 'buy' ? 'quoteBuy' : 'quoteSell'](OPTIONS), ProviderError, 'DFX quote amounts must be positive', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol[DIRECTION === 'buy' ? 'quoteBuy' : 'quoteSell'](OPTIONS), ProviderError, 'DFX quote amounts must be positive', 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, DIRECTION === 'buy' ? BUY_QUOTE_REQUEST : SELL_QUOTE_REQUEST])
     })
 
     test.each([METHOD])('%s rejects absent fee totals', async CASE_METHOD => {
       const DIRECTION = CASE_METHOD === 'quoteBuy' ? 'buy' : 'sell'
       const { protocol } = setup({}, { [`PUT /v1/${DIRECTION}/quote`]: response({ isValid: true, amount: 1, estimatedAmount: 1, rate: 1 }) })
-      await failure(protocol[CASE_METHOD](OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol[CASE_METHOD](OPTIONS), ProviderError, 'Invalid decimal in DFX response', 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, CASE_METHOD === 'quoteBuy' ? BUY_QUOTE_REQUEST : SELL_QUOTE_REQUEST])
     })
 
@@ -705,17 +705,17 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
   function arrayMessageCases (METHOD) {
     test.each([
-      ['buy', 'POST /v1/auth', 400, ['address must be a string', 'signature must be a string'], 'address must be a string; signature must be a string', ProviderError, 'INTERNAL_SERVER_ERROR'],
-      ['buy', 'POST /v1/auth', 400, ['Invalid signature'], 'Invalid signature', ProviderError, 'INTERNAL_SERVER_ERROR'],
-      ['buy', 'POST /v1/auth', 401, ['Unauthorized', 'Session expired'], 'Unauthorized; Session expired', ProviderError, 'UNAUTHORIZED'],
-      ['getSupportedCountries', 'GET /v1/country', 503, ['Unavailable', 'Try later'], 'Unavailable; Try later', ProviderError, 'INTERNAL_SERVER_ERROR'],
-      ['getSupportedCryptoAssets', 'GET /v1/asset', 400, ['Invalid filter', 'Try later'], 'Invalid filter; Try later', ProviderError, 'INTERNAL_SERVER_ERROR'],
-      ['getSupportedFiatCurrencies', 'GET /v1/fiat', 422, ['Invalid filter', 'Try later'], 'Invalid filter; Try later', ProviderError, 'INTERNAL_SERVER_ERROR'],
-      ['quoteBuy', 'PUT /v1/buy/quote', 400, ['amount must be positive', 'asset must be valid'], 'amount must be positive; asset must be valid', ValueError, undefined],
-      ['quoteSell', 'PUT /v1/sell/quote', 422, ['amount must be positive', 'asset must be valid'], 'amount must be positive; asset must be valid', ValueError, undefined],
-      ['getTransactionDetail', 'GET /v1/transaction/detail/single?uid=123', 404, ['Transaction not found', 'Try later'], 'Transaction not found; Try later', NoSuchElementError, undefined],
-      ['getTransactionDetail', `GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`, 400, ['Invalid signature', 'Challenge unavailable'], 'Invalid signature; Challenge unavailable', ProviderError, 'INTERNAL_SERVER_ERROR']
-    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s preserves string-array errors from %s (%s)', async (CASE_METHOD, ROUTE, DUMMY_STATUS, DUMMY_MESSAGES, EXPECTED_MESSAGE, ErrorClass, EXPECTED_REASON) => {
+      ['buy', 'POST /v1/auth', 400, ['address must be a string', 'signature must be a string'], 'address must be a string; signature must be a string', ProviderError, 'INTERNAL_SERVER_ERROR', [OPTIONS]],
+      ['buy', 'POST /v1/auth', 400, ['Invalid signature'], 'Invalid signature', ProviderError, 'INTERNAL_SERVER_ERROR', [OPTIONS]],
+      ['buy', 'POST /v1/auth', 401, ['Unauthorized', 'Session expired'], 'Unauthorized; Session expired', ProviderError, 'UNAUTHORIZED', [OPTIONS]],
+      ['getSupportedCountries', 'GET /v1/country', 503, ['Unavailable', 'Try later'], 'Unavailable; Try later', ProviderError, 'INTERNAL_SERVER_ERROR', []],
+      ['getSupportedCryptoAssets', 'GET /v1/asset', 400, ['Invalid filter', 'Try later'], 'Invalid filter; Try later', ProviderError, 'INTERNAL_SERVER_ERROR', []],
+      ['getSupportedFiatCurrencies', 'GET /v1/fiat', 422, ['Invalid filter', 'Try later'], 'Invalid filter; Try later', ProviderError, 'INTERNAL_SERVER_ERROR', []],
+      ['quoteBuy', 'PUT /v1/buy/quote', 400, ['amount must be positive', 'asset must be valid'], 'amount must be positive; asset must be valid', ValueError, undefined, [OPTIONS]],
+      ['quoteSell', 'PUT /v1/sell/quote', 422, ['amount must be positive', 'asset must be valid'], 'amount must be positive; asset must be valid', ValueError, undefined, [OPTIONS]],
+      ['getTransactionDetail', 'GET /v1/transaction/detail/single?uid=123', 404, ['Transaction not found', 'Try later'], 'Transaction not found; Try later', NoSuchElementError, undefined, ['123']],
+      ['getTransactionDetail', `GET /v1/auth/signMessage?address=${DUMMY_ADDRESS}`, 400, ['Invalid signature', 'Challenge unavailable'], 'Invalid signature; Challenge unavailable', ProviderError, 'INTERNAL_SERVER_ERROR', ['123']]
+    ].filter(([CASE_METHOD]) => CASE_METHOD === METHOD))('%s preserves string-array errors from %s (%s)', async (CASE_METHOD, ROUTE, DUMMY_STATUS, DUMMY_MESSAGES, EXPECTED_MESSAGE, ErrorClass, EXPECTED_REASON, ARGS) => {
       const { protocol } = setup({ network: 'ethereum' }, { [ROUTE]: response({ message: DUMMY_MESSAGES }, DUMMY_STATUS) })
       const EXPECTED_REQUESTS = {
         buy: ETH_WIDGET_REQUESTS,
@@ -728,7 +728,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
           ? [CHALLENGE_REQUEST, ETH_AUTH_REQUEST, DETAIL_REQUEST]
           : [CHALLENGE_REQUEST]
       }
-      await failure(protocol[CASE_METHOD](CASE_METHOD === 'getTransactionDetail' ? '123' : OPTIONS), ErrorClass, EXPECTED_MESSAGE, EXPECTED_REASON)
+      await failure(protocol[CASE_METHOD](...ARGS), ErrorClass, EXPECTED_MESSAGE, EXPECTED_REASON)
       expectInteractions(EXPECTED_REQUESTS[CASE_METHOD],
         CASE_METHOD === 'buy' || ROUTE === 'GET /v1/transaction/detail/single?uid=123' ? [['[dev]_Sign this exact message']] : [],
         CASE_METHOD === 'buy' || CASE_METHOD === 'getTransactionDetail' ? [[]] : [])
@@ -746,20 +746,20 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   describe('constructor', () => {
-    test.each([0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', async TIMEOUT => {
-      await failure(Promise.resolve().then(() => new DfxProtocol(undefined, { timeout: TIMEOUT })), ValueError, 'timeout must be a finite number greater than zero')
+    test.each([0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', TIMEOUT => {
+      failureSync(() => new DfxProtocol(undefined, { timeout: TIMEOUT }), ValueError, 'timeout must be a finite number greater than zero')
       expectInteractions([])
     })
 
-    test.each([2147483648, Number.MAX_VALUE])('rejects timer overflow %s', async TIMEOUT => {
-      await failure(Promise.resolve().then(() => new DfxProtocol(undefined, { timeout: TIMEOUT })), ValueError, 'timeout must not exceed 2147483647 milliseconds')
+    test.each([2147483648, Number.MAX_VALUE])('rejects timer overflow %s', TIMEOUT => {
+      failureSync(() => new DfxProtocol(undefined, { timeout: TIMEOUT }), ValueError, 'timeout must not exceed 2147483647 milliseconds')
       expectInteractions([])
     })
 
     test.each(['network', 'wallet', 'publicKey', 'language'].flatMap(FIELD =>
       ['', '  '].map(VALUE => [FIELD, VALUE])
-    ))('rejects invalid constructor string %s case %#', async (FIELD, VALUE) => {
-      await failure(Promise.resolve().then(() => new DfxProtocol(undefined, { [FIELD]: VALUE })), ValueError, `${FIELD} must be a non-empty string`)
+    ))('rejects invalid constructor string %s case %#', (FIELD, VALUE) => {
+      failureSync(() => new DfxProtocol(undefined, { [FIELD]: VALUE }), ValueError, `${FIELD} must be a non-empty string`)
       expectInteractions([])
     })
   })
@@ -798,11 +798,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
         const { protocol, routes } = ownerSetup()
         routes[ROUTE] = response(DUMMY_BODY, DUMMY_STATUS)
 
-        const initialError = await protocol.buy(OPTIONS).catch(error => error)
-
-        expect(initialError.constructor).toBe(ProviderError)
-        expect(initialError.message).toBe(EXPECTED_MESSAGE)
-        expect(initialError.reason).toBe(EXPECTED_REASON)
+        await failure(protocol.buy(OPTIONS), ProviderError, EXPECTED_MESSAGE, EXPECTED_REASON)
         expectInteractions([...CATALOG_REQUESTS, ...EXPECTED_REQUESTS], EXPECTED_SIGNATURES, [[]])
       }
     )
@@ -829,7 +825,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const EXPECTED_REQUESTS = [...CATALOG_REQUESTS, CHALLENGE_REQUEST,
         httpRequest(`/v1/auth/signMessage?address=${EXPECTED_ADDRESS}`),
         httpRequest('/v1/auth', 'POST', JSON.stringify({ address: EXPECTED_ADDRESS, signature: DUMMY_SIGNATURE, blockchain: 'Ethereum' }))]
-      await failure(protocol.buy(OPTIONS), ProviderError, 'Invalid signature', ProviderErrorReason.UNAUTHORIZED)
+      await failure(protocol.buy(OPTIONS), ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expectInteractions(EXPECTED_REQUESTS,
         [[DUMMY_ACCOUNT_MESSAGE], [DUMMY_OWNER_MESSAGE]], [[]])
     })
@@ -964,19 +960,19 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
     test.each(['KycRequired', 'BankTransactionMissing', 'PrimaryEmailNotConfirmed', 'LimitExceeded', 'NewAccountState'])('maps account state %s to the provider fallback', async DUMMY_CODE => {
       const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: false, errors: [{ error: DUMMY_CODE }] }) })
-      await failure(protocol.quoteBuy(OPTIONS), ProviderError, `DFX quote rejected: ${DUMMY_CODE}`, ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, `DFX quote rejected: ${DUMMY_CODE}`, 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
     })
 
     test.each([{ isValid: false }, { isValid: false, errors: [] }])('rejects invalid quotes without error codes', async DUMMY_BODY => {
       const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY) })
-      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid DFX quote without an error code', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid DFX quote without an error code', 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
     })
 
     test('rejects a quote without explicit validity', async () => {
       const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({}) })
-      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Missing quote validity', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Missing quote validity', 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
     })
 
@@ -991,13 +987,13 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     ])('rejects fractional or negative smallest units in %s', async (FIELD, DUMMY_VALUE) => {
       const DUMMY_BODY = { isValid: true, amount: '100', estimatedAmount: '0.05', rate: '2000', fees: { total: '1' }, [FIELD]: DUMMY_VALUE }
       const { protocol } = setup({}, { 'PUT /v1/buy/quote': response(DUMMY_BODY) })
-      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'DFX amount is not a non-negative integer in smallest units', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'DFX amount is not a non-negative integer in smallest units', 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
     })
 
     test.each([undefined, 'NaN', '01', true])('rejects malformed quote decimals %s', async DUMMY_AMOUNT => {
       const { protocol } = setup({}, { 'PUT /v1/buy/quote': response({ isValid: true, amount: DUMMY_AMOUNT, estimatedAmount: 1 }) })
-      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid decimal in DFX response', ProviderErrorReason.INTERNAL_SERVER_ERROR)
+      await failure(protocol.quoteBuy(OPTIONS), ProviderError, 'Invalid decimal in DFX response', 'INTERNAL_SERVER_ERROR')
       expectInteractions([...CATALOG_REQUESTS, BUY_QUOTE_REQUEST])
     })
 
@@ -1373,7 +1369,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
       const result = protocol.getTransactionDetail('123')
 
-      await failure(result, ProviderError, 'Invalid signature', ProviderErrorReason.UNAUTHORIZED)
+      await failure(result, ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expect(getAddressMock.mock.calls).toEqual([[]])
       expect(signMock.mock.calls).toEqual([[DUMMY_MESSAGE]])
       expectRequests(fetchMock.mock.calls, [
@@ -1395,7 +1391,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
       const result = protocol.getTransactionDetail('123')
 
-      await failure(result, ProviderError, 'Invalid signature', ProviderErrorReason.UNAUTHORIZED)
+      await failure(result, ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expect(getAddressMock.mock.calls).toEqual([[]])
       expect(signMock.mock.calls).toEqual([[DUMMY_MESSAGE]])
       expectRequests(fetchMock.mock.calls, [
@@ -1426,7 +1422,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
 
       const result = protocol.getTransactionDetail('123')
 
-      await failure(result, ProviderError, 'Invalid signature', ProviderErrorReason.UNAUTHORIZED)
+      await failure(result, ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expect(getAddressMock.mock.calls).toEqual([[]])
       expect(signMock.mock.calls).toEqual([[DUMMY_MESSAGE], [DUMMY_MESSAGE]])
       expectRequests(fetchMock.mock.calls, [

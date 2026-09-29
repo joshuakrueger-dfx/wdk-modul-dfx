@@ -320,7 +320,7 @@ request two signatures each.
   Expected values are fixed literals computed independently from the recorded responses. Checks: 12/12 with all
   outbound network access denied by a macOS sandbox profile (a control fetch in the same profile is blocked);
   turning off the fake's signature check makes the wrong-key test fail; module mutations M02 and M12 fail 2 and 5 of
-  the 12. No environment variable is needed; a fresh WDK EVM account is generated per test. Before this change the
+  the 12. No environment variable is needed; WDK EVM accounts at indexes 0 and 1 are derived from a fixed public BIP-39 test phrase. Before this change the
   three authenticated tests were skipped unless an account module was supplied, so they never ran in the gate.
 - Live coverage moved entirely to `e2e/live-matrix.mjs`; rerun on 2026-09-28 with `ec9b788` against the
   sandbox: 172/178, the same six expected failures as in section 2.

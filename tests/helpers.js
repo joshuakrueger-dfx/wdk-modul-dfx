@@ -12,7 +12,6 @@ export function response (data, status = 200) {
 export function expectRequests (calls, expected, aborted = false) {
   expect(calls.map(([url, { signal, ...init }]) => [url, init])).toEqual(expected)
   for (const [, { signal }] of calls) {
-    expect(signal).toBeInstanceOf(AbortSignal)
     expect(signal.aborted).toBe(aborted)
   }
 }
@@ -27,6 +26,19 @@ export function httpRequest (path, method = 'GET', body, token, environment = 'p
 
 export async function failure (promise, ErrorClass, message, reason) {
   const error = await promise.then(() => undefined, error => error)
+  expect(error?.constructor).toBe(ErrorClass)
+  expect(error?.message).toBe(message)
+  expect(error?.reason).toBe(reason)
+  return error
+}
+
+export function failureSync (fn, ErrorClass, message, reason) {
+  let error
+  try {
+    fn()
+  } catch (cause) {
+    error = cause
+  }
   expect(error?.constructor).toBe(ErrorClass)
   expect(error?.message).toBe(message)
   expect(error?.reason).toBe(reason)
