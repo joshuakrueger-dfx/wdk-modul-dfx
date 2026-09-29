@@ -28,9 +28,9 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, local | `npm run test:integration` | 28/28 tests in 2 suites against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests | `npm run lint && npm test` | lint output empty; 696/696 tests in 2 suites |
-| Coverage (unit + integration) | `npm run test:coverage` | 724/724 tests in 4 suites; 100 % statements, branches, functions, lines |
+| Integration, local | `npm run test:integration` | 27/27 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
+| Unit tests | `npm run lint && npm test` | lint output empty; 696/696 tests in 1 suite |
+| Coverage (unit + integration) | `npm run test:coverage` | 723/723 tests in 2 suites; 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 41/41 mutations detected across unit and integration suites, each by 1–218 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
@@ -49,8 +49,8 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 
 ## 1. Unit tests
 
-`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs 2 unit suites, 696 tests, all passing;
-`npm run test:coverage` adds the 2 integration suites (724 tests) and reaches 100 % coverage in all four categories. The
+`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 696 tests, all passing;
+`npm run test:coverage` adds the integration suite (723 tests together) and reaches 100 % coverage in all four categories. The
 session and signer-cache cases need several public calls and live in the integration suites (skill rule R3). All
 unit tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
@@ -307,7 +307,7 @@ request two signatures each.
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
-- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 28/28, see section
+- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 27/27, see section
   11 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.
@@ -328,10 +328,15 @@ request two signatures each.
   - `wdk-review-tests`: 4 of 11 (expected values rebuilding module logic, tests calling several methods, duplicates, a
     random seed in integration tests).
 
-  All fixed in `c9b2c90`. The session and signer-cache scenarios moved to `tests/integration/auth-sessions.test.js`
+  All fixed in `c9b2c90`. The session and signer-cache scenarios moved to `tests/integration/module.test.js`
   (real WDK signatures, fixed public test phrase from the skill, server state reset per test). The full catalogs are
   compared against `tests/integration/fixtures/expected-catalog.json`, computed independently in Python from the
-  recorded responses. A fourth pass on `c9b2c90` has not been run.
+  recorded responses.
+- Fourth pass of all three skills on `8c3f53e`: `wdk-review-dts` 0 violations (6 of 9 rules met, 3 not applicable),
+  `wdk-review-jsdocs` 0 violations (30 of 39 met, 9 not applicable), `wdk-review-tests` 7 small violations (subsumed
+  assertions, arrange after act, constant scope, `DUMMY_` naming, one `describe` name, one integration file and one
+  file per method). All fixed in the following commit; the session scenarios now live in
+  `tests/integration/module.test.js`. No fifth pass has been run.
 
 ## 11. E2E re-run against the current code (2026-09-28)
 

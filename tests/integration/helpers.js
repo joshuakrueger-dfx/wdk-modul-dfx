@@ -26,15 +26,14 @@ export function resetServer (faults = {}) {
   return serverControl('/__reset', { method: 'POST', body: JSON.stringify(faults) })
 }
 
-export const SMART_ADDRESS = '0x0000000000000000000000000000000000000001'
-export const NEXT_SMART_ADDRESS = '0x0000000000000000000000000000000000000002'
+export const DUMMY_SMART_ADDRESS = '0x0000000000000000000000000000000000000001'
 
 export function challengeMessage (address) {
   return `[dev]_By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address._Your_ID:_${address}`
 }
 
 export class DummySmartAccount {
-  constructor (account, address = SMART_ADDRESS) {
+  constructor (account, address = DUMMY_SMART_ADDRESS) {
     this.account = account
     this.address = address
     this.messages = []
@@ -72,21 +71,3 @@ export function localFetch (url, init) {
 }
 
 export const LOCAL_CONFIG = { ...CONFIG, fetch: localFetch }
-
-export class DummyChangingSigner {
-  constructor (account, otherAccount) {
-    this.account = account
-    this.otherAccount = otherAccount
-    this.calls = 0
-  }
-
-  getAddress () {
-    return this.account.getAddress()
-  }
-
-  sign (message) {
-    // The protocol retries with the recovered owner after the first signature.
-    // Switching keys then makes the POST signature invalid for its address.
-    return (this.calls++ === 0 ? this.otherAccount : this.account).sign(message)
-  }
-}
