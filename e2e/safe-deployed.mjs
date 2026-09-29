@@ -19,10 +19,16 @@ const results = []
 const stop = new AbortController()
 let child, childDone, childError, wdk, rpcUrl, account, fiat, safe, owner, signatureBefore
 let rpcId = 0
+let anvilStderr = ''
 
 class ProbeFailure extends Error {}
 function check (condition, message) {
   if (!condition) throw new ProbeFailure(message)
+}
+
+function anvilDiagnostic (message) {
+  const tail = anvilStderr.replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').trim().split(/\r?\n/).slice(-10).join('\n')
+  return tail ? `${message}\nAnvil stderr (last 10 lines):\n${tail}` : message
 }
 
 async function step (name, fn) {
@@ -35,7 +41,7 @@ async function step (name, fn) {
     return value
   } catch (error) {
     // Third-party errors can contain signed requests, seeds or session URLs.
-    // Only our own constant diagnostics are safe to persist or print.
+    // Only explicit probe diagnostics (including URL-masked Anvil stderr) are printed.
     const diagnostic = error instanceof ProbeFailure ? error.message : 'Operation failed; sensitive error details omitted'
     results.push({ chain: 'polygon-4337', name, ok: false, error: diagnostic })
     console.log(`  FAIL ${name}: ${diagnostic}`)
@@ -61,12 +67,15 @@ async function waitFor (fn, timeout, diagnostic) {
   while (Date.now() < deadline) {
     stop.signal.throwIfAborted()
     check(childError?.code !== 'ENOENT', 'Anvil executable not found; install anvil and add it to PATH')
-    check(!childError && child.exitCode === null && child.signalCode === null, 'Anvil exited unexpectedly')
+    if (childError || child.exitCode !== null || child.signalCode !== null) {
+      await childDone // Wait for stderr to drain before reporting the failure.
+      throw new ProbeFailure(anvilDiagnostic('Anvil exited unexpectedly'))
+    }
     const value = await fn()
     if (value) return value
     await delay(250, undefined, { signal: stop.signal })
   }
-  throw new ProbeFailure(diagnostic)
+  throw new ProbeFailure(anvilDiagnostic(diagnostic))
 }
 
 async function stopAnvil () {
@@ -97,6 +106,12 @@ async function run () {
   })
 
   await step('start Polygon fork and await eth_chainId', async () => {
+    const forkUrl = process.env.ANVIL_FORK_URL ?? 'https://polygon-bor-rpc.publicnode.com'
+    let parsedForkUrl
+    try { parsedForkUrl = new URL(forkUrl) } catch {
+      throw new ProbeFailure('ANVIL_FORK_URL must be a valid HTTPS URL')
+    }
+    check(parsedForkUrl.protocol === 'https:', 'ANVIL_FORK_URL must be a valid HTTPS URL')
     const portText = process.env.ANVIL_PORT ?? '8547'
     check(/^\d+$/.test(portText), 'ANVIL_PORT must be an integer')
     const port = Number(portText)
@@ -109,12 +124,14 @@ async function run () {
       server.listen(port, '127.0.0.1', () => server.close(error => error ? reject(error) : resolve()))
     })
     child = spawn('anvil', [
-      '--fork-url', 'https://polygon-bor-rpc.publicnode.com',
-      '--chain-id', '137', '--host', '127.0.0.1', '--port', String(port), '--silent'
-    ], { stdio: 'ignore' })
+      '--fork-url', forkUrl,
+      '--chain-id', '137', '--host', '127.0.0.1', '--port', String(port)
+    ], { stdio: ['ignore', 'ignore', 'pipe'] })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', chunk => { anvilStderr = (anvilStderr + chunk).slice(-8192) })
     childDone = new Promise(resolve => {
       child.once('error', error => { childError = error; resolve() })
-      child.once('exit', resolve)
+      child.once('close', resolve)
     })
     await waitFor(async () => {
       try { return await rpc('eth_chainId') === '0x89' } catch { return false }

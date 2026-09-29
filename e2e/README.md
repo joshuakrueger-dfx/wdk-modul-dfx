@@ -329,8 +329,14 @@ node kyc-widget.mjs > out/kyc-widget.log 2>&1
 WDK smart account there without a bundler and signs before and after
 deployment. It then uses the deployed account through the module against the
 DFX **sandbox** (`buy`, `sell` and session checks). It needs `anvil` on `PATH`;
-`ANVIL_PORT` defaults to 8547.
+`ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
+and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
+are accepted. Set the variable in the process environment; the probe does not
+load `.env` files. Anvil failures include the last ten stderr lines from a buffer
+limited to 8192 characters, with URLs masked, to expose upstream RPC errors.
 
 ```sh
 node safe-deployed.mjs > out/safe-deployed.log 2>&1
+# Alternative upstream if the default RPC is overloaded:
+ANVIL_FORK_URL=https://1rpc.io/matic node safe-deployed.mjs > out/safe-deployed.log 2>&1
 ```

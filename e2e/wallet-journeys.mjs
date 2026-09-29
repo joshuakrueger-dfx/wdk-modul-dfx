@@ -62,6 +62,15 @@ const JOURNEYS = [
 const tid = id => `[data-testid="${id}"], #${id}`
 const masked = s => String(s ?? '').replace(/([?&]session=)[^&\s"<>]+/g, '$1[REDACTED]').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED-JWT]')
 const clean = s => masked(s).replace(/\s+/g, ' ').trim().slice(0, 300)
+const STATE_TIMEOUT = 60000
+async function waitForState (context, description, predicate) {
+  try {
+    const result = await context.waitForFunction(predicate, null, { timeout: STATE_TIMEOUT })
+    await result.dispose()
+  } catch (error) {
+    throw new Error(`${description}: ${error.message}`)
+  }
+}
 
 const browser = await chromium.launch()
 try {
@@ -69,7 +78,7 @@ try {
     try {
       await startServer()
       const page = await browser.newPage({ viewport: { width: 900, height: 1000 } })
-      const timeout = setTimeout(() => { page.close().catch(() => {}) }, 200000)
+      const timeout = setTimeout(() => { page.close().catch(() => {}) }, 10 * STATE_TIMEOUT)
       try {
         const errors = []
         page.on('pageerror', e => errors.push(String(e)))
@@ -79,12 +88,16 @@ try {
           await page.goto(BASE, { waitUntil: 'networkidle' })
           if (j.smart) await page.locator(tid('smart-account')).check().catch(() => page.locator(tid('smart-account')).click())
           await page.locator(tid('create-wallet')).click()
-          await page.waitForTimeout(4000)
+          await waitForState(page, 'Wallet accounts did not become visible', () =>
+            document.querySelector('#portfolio')?.hidden === false && document.querySelector('#accounts .account'))
           out.home = clean(await page.locator('body').innerText())
           await shot('1-home')
 
           await page.locator(tid(j.direction === 'buy' ? 'btn-buy' : 'btn-sell')).click()
-          await page.waitForTimeout(1500)
+          await waitForState(page, 'Asset options or a final offer message did not appear', () => {
+            const offer = document.querySelector('#offer')?.textContent.trim()
+            return document.querySelector('#asset-select option') || (offer && offer !== 'Verfügbare Angebote werden geladen …')
+          })
           const select = page.locator(tid('asset-select'))
           const options = await select.locator('option').allTextContents()
           const pick = options.find(o => j.asset.test(o))
@@ -94,25 +107,53 @@ try {
           await page.locator(tid('fiat-select')).selectOption(j.fiat).catch(() => {})
           if (j.crypto) await page.locator(tid('amount-mode')).selectOption('crypto').catch(() => page.locator(tid('amount-mode')).click())
           await page.locator(tid('amount')).fill(j.amount)
-          await page.waitForTimeout(3500)
+          await waitForState(page, 'Quote result or error did not appear', () => {
+            const offer = document.querySelector('#offer')
+            return offer?.textContent.trim() && (offer.classList.contains('error') || document.querySelector('#continue-dfx')?.disabled === false)
+          })
           out.offer = clean(await page.locator(tid('offer')).innerText())
           await shot('2-offer')
 
           const cont = page.locator(tid('continue-dfx'))
           if (await cont.isDisabled().catch(() => true)) { out.continue = 'disabled'; throw new Error('continue disabled (expected for error cases)') }
           await cont.click()
-          await page.waitForSelector(tid('browser-frame'), { timeout: 20000 })
+          await waitForState(page, 'DFX checkout frame did not open', () =>
+            document.querySelector('#browser-sheet')?.hidden === false && document.querySelector('#browser-frame')?.getAttribute('src'))
           const frame = page.frameLocator(tid('browser-frame'))
-          await page.waitForTimeout(9000)
+          const dfxFrame = await (await page.locator(tid('browser-frame')).elementHandle()).contentFrame()
+          if (!dfxFrame) throw new Error('DFX checkout frame is unavailable')
+          const heading = j.direction === 'buy' ? 'Buy' : 'Sell'
+          try {
+            const result = await dfxFrame.waitForFunction(expectedHeading => {
+              const text = document.body?.innerText.trim() ?? ''
+              return location.href !== 'about:blank' && text &&
+                !/^Loading\s*[.…]*$/i.test(text) && new RegExp(`\\b${expectedHeading}\\b`).test(text)
+            }, heading, { timeout: STATE_TIMEOUT })
+            await result.dispose()
+          } catch (error) {
+            const lastText = await dfxFrame.evaluate(() => document.body?.innerText ?? '')
+              .catch(e => `frame read failed: ${e.message}`)
+            throw new Error(`DFX widget ${heading} not ready within 60 s; last text: ${JSON.stringify(clean(lastText))}; ${error.message}`)
+          }
           out.dfx = clean(await frame.locator('body').innerText().catch(e => 'frame read failed: ' + e.message))
           await shot('3-dfx')
 
           await page.locator(tid('browser-close')).click()
-          await page.waitForTimeout(800)
-          await page.locator(tid('orders')).click().catch(() => {})
-          await page.waitForTimeout(800)
+          await waitForState(page, 'Return to orders did not complete', () =>
+            document.querySelector('#browser-sheet')?.hidden === true && document.querySelector('#orders')?.hidden === false)
+          await waitForState(page, 'Order list did not finish loading', () => {
+            const list = document.querySelector('#order-list')?.textContent.trim()
+            return list && list !== 'Aufträge werden geladen …'
+          })
+          if (!await page.locator(tid('order-item')).count()) {
+            throw new Error(`No order available: ${clean(await page.locator('#order-list').innerText())}`)
+          }
           await page.locator(tid('order-item')).first().click()
-          await page.waitForTimeout(3000)
+          await waitForState(page, 'Order status or error did not appear', () => {
+            const status = document.querySelector('#order-status')
+            const text = status?.textContent.trim()
+            return status?.hidden === false && text && text !== 'Status bei DFX wird abgefragt …'
+          })
           out.status = clean(await page.locator(tid('order-status')).first().innerText().catch(() => ''))
           await shot('4-orders')
         } catch (e) {

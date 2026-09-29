@@ -14,11 +14,12 @@ unless it says so.
     check of `recipient`/`refundAddress` before sign-in only runs when the sign-in address is the account address
     itself (non-EVM or EOA). Integration expectations use address and signature literals computed independently with
     ethers for the public test phrase; no wallet call computes an expected value.
-  - **Library code `ec9b788` (2026-09-28):** the e2e probes of section 11 and the remaining rows of the summary table.
-    They consumed a packed copy of the module whose `src/` and `index.js` were compared byte for byte with the
-    repository before the run. The changes above are not exercised by those probes and were not re-run there.
-  - **Earlier code `0be1b6d`:** the real purchase with real money (section 9, 2026-09-28 morning). It was not repeated
-    after the review changes, because repeating it needs new money.
+  - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the remaining rows of the summary table,
+    re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
+    byte for byte with the repository before the run. Section 11 keeps the earlier run against `ec9b788`.
+  - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
+    on 2026-09-29 the same production order, wallet and DFX account were re-checked with `20ec94d` without a payment
+    (section 12).
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
 - **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
@@ -45,13 +46,13 @@ unless it says so.
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
 | Widget as the user sees it | `cd e2e && node widget-check.mjs` | the widget opens signed in, amount/asset/network prefilled, in sandbox and production |
-| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 7/7 journeys, 0 page errors |
-| After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps |
+| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 6/7 journeys reach the DFX widget, 0 page errors; the Solana journey fails whenever the random Solana address starts with `3` (DFX backend issue, section 12) |
+| After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps (second run; the first stopped at a transient local `fetch failed`, section 12) |
 | Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Lightning, Arkade, Firo listed and quoted in sandbox and production |
 | Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
-| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | buy and sell reach an automatic AML `Pass`; rejection and refund reach `Returned`; the module status matches every DFX state observed |
+| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules) |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
-| Deployed ERC-4337 account | `cd e2e && node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
+| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
 | Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; second test-skill pass applied |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
@@ -360,10 +361,10 @@ byte for byte with `src/` before the run):
 | `live-matrix.mjs`, sandbox | 172/178, the same six expected failures as in section 2 |
 | `live-matrix.mjs`, production | 175/179, the same four failures (Sepolia USDT, DFX data) as in section 2 |
 | `widget-check.mjs`, sandbox and production | widget opens signed in with amount, asset and network prefilled |
-| `wallet-journeys.mjs` | 7/7 journeys |
+| `wallet-journeys.mjs` | 6/7: the Solana sell journey stopped because DFX sign-in failed (correction 2026-09-29: this row said 7/7 from the exit code alone; the cause is the DFX Solana address issue in section 12) |
 | `fullstack.mjs` | first run: the local backend answered "No valid price found for CHF → ETH" for the first buy (local price feed, not the module; sign-in and widget URL were green, and a later buy in the same run got payment details); second run: 29/29 |
 | `fullstack-processing.mjs` | sell matching by the real `BuyFiat` job and the +10 % counter-test as in section 6; the two "observe processing for six minutes" steps stay red, because this first probe does not perform the operating steps (bank data approval, IP phone check) that the AML decision needs. Whether they were also red on 2026-09-25 cannot be shown, because that log was not kept. The lifecycle probe covers the AML decision |
-| `fullstack-lifecycle.mjs` (`OBSERVE_MINUTES=15`) | 60 steps OK, 0 failed; buy A reaches automatic AML `Pass`, the rejected buy B goes through `Failed` to `Returned`, the sale reaches AML `Pass`; the module status matched all seven DFX states observed (`Created`, `CheckPending`, `LiquidityPending`, `Processing` → `in_progress`; `Failed`, `Returned` → `failed`; `ReturnPending` → `in_progress`) |
+| `fullstack-lifecycle.mjs` (`OBSERVE_MINUTES=15`) | 60 steps OK, 0 failed — corrected 2026-09-29: two of them were milestones that were not reached (crypto payout for buy A, fiat bank execution for the sale) and were recorded as OK by a probe bug fixed afterwards; buy A reaches automatic AML `Pass`, the rejected buy B goes through `Failed` to `Returned`, the sale reaches AML `Pass`; the module status matched all seven DFX states observed (`Created`, `CheckPending`, `LiquidityPending`, `Processing` → `in_progress`; `Failed`, `Returned` → `failed`; `ReturnPending` → `in_progress`) |
 | `kyc-widget.mjs` | module steps green (sign-in, level 10, level 20, nationality, then quote and widget for the same account); the API log shows the documented boundary: `PUT /v2/kyc` answers 503 after the Sumsub call fails, and the widget loops on *Continue*. The probe's own boundary check stays red because no identification step is created |
 | `safe-deployed.mjs` | 13/13 |
 | Real purchase (section 9) | not repeated; belongs to `0be1b6d` |
@@ -381,9 +382,48 @@ The second review round added: every lifecycle milestone that is not reached (di
 bank executions) now fails the run with a non-zero exit; `widget-check.mjs` and the wallet simulator refuse URL, order
 and seed files that are symbolic links, not owned by the user or open to group or others. Checked: `node --check` for
 every changed script; `widget-check.mjs` refuses a URL file with mode 0644 and a symbolic link and accepts an owned
-0600 file. The lifecycle change was not exercised by a run, for the same port reason.
+0600 file. The lifecycle change was not exercised by a run at that time, for the same port reason; section 12 exercises it.
+
+## 12. E2E re-run against `20ec94d` (2026-09-29)
+
+Every probe under `e2e/` that needs no new money, run again against library code `20ec94d` (module copy compared byte
+for byte with `src/` before the run). The local stack ran as its own project on ports 3040/3041 (`DFX_LOCAL_API`,
+`DFX_LOCAL_APP`, `DFX_LOCAL_DB_CONTAINER`), because another local stack used 3020/3021; backend `63cb9d569`, the same
+13 background jobs enabled as in section 6.
+
+| Probe | Result |
+| --- | --- |
+| `signature-diff.mjs` | 0 mismatches (20 000 Solana, 5 000 Spark) |
+| `native-quotes.mjs`, sandbox and production | listed and quoted; one expected `AmountTooLow` for the 0.01 FIRO sell |
+| `live-matrix.mjs`, sandbox | 172/178, the same six expected failures as in section 2 |
+| `live-matrix.mjs`, production | 175/179, the same four failures as in section 2 |
+| `widget-check.mjs`, sandbox and production | 4/4 each: widget opens signed in with amount, asset and network prefilled |
+| `wallet-journeys.mjs` | first run 0/7 and 2/7: the runner waited fixed seconds and clicked before the wallet existed under load (about 1 100 processes); now it waits for observable states. Then 6/7 reach the DFX widget (`Buy`/`Sell` heading loaded); the Solana sell journey stops at DFX sign-in (see below). In the sandbox a 1 EUR purchase is accepted (production rejects it with `AmountTooLow`, limit 10.57 EUR), so `eth-too-low` is an ordinary flow there |
+| `fullstack.mjs` | first run stopped at "sell: bank account via factory API" with `fetch failed` after 3 ms (request never reached the proxy; the same request in isolation returned 201; cause not determined, possibly the 256 open-file limit after 200 `docker exec` calls); second run 29/29 |
+| `fullstack-processing.mjs` | 24 steps OK; sell matching as in section 6; the two six-minute observation steps red as in section 11 |
+| `fullstack-lifecycle.mjs` (`OBSERVE_MINUTES=15`) | 56 steps OK, 2 red: the crypto payout for buy A and the fiat bank execution for the sale are not prepared by the local stack ("no positive crypto output and fee", "no executable fiat output"; the local stack has no liquidity rules). AML `Pass` for buy A and the sale, `Failed` → `Returned` for buy B; module status matched all seven DFX states observed. `completed` is shown only by the real purchase |
+| `kyc-widget.mjs` | module steps green; boundary as in section 7 (14 × `PUT /v2/kyc` 503 in the API log) |
+| `safe-deployed.mjs` | the default public Polygon RPC answered HTTP 529 ("upstream overloaded") to the fork request three times; with `ANVIL_FORK_URL=https://polygon.drpc.org` 13/13 |
+
+**Real purchase re-check without payment.** With `20ec94d`, the wallet of section 9 (address checked) and its existing
+production DFX account: `getTransactionDetail` for the paid order by external ID returns `completed` (ETH, EUR) with one
+signature; a second lookup on the same instance needs no signature; two parallel lookups on a fresh instance share one
+sign-in (one signature); `quoteBuy` 20 EUR → ETH on Arbitrum returns a quote; `buy` returns an `app.dfx.swiss/buy` URL
+with the same parameters as in section 9 (without an external ID, which the check did not set) and one signature, and
+the detail session stays usable afterwards without a new signature. The payment and payout path of DFX were not
+repeated.
+
+**DFX backend issue found: Solana addresses starting with `3`.** DFX rejects sign-ins of Solana accounts whose address
+starts with `3` with 400 "Invalid signature". Sandbox, fresh throwaway accounts: 5 of 5 addresses starting with `3`
+rejected, 5 of 5 others accepted; the rejected signatures verify locally (ed25519) and are sent unchanged. Cause in
+`DFXswiss/backend` (`origin/develop`): `bitcoinAddressFormat = '([13]|bc1)[a-zA-HJ-NP-Z0-9]{25,62}|…'` also matches
+43–44-character Base58 addresses beginning with `1` or `3`; `CryptoService` detects Bitcoin before Solana and
+`verifySignature` uses the detected chain (the `blockchain` field is only used for EVM). Roughly 10–15 % of random
+Solana wallets are affected. Production uses the same code; it was not tested there. The module cannot work around it.
 
 ## Not covered
+
+- **Solana sign-in for addresses starting with `3` (or `1`).** Fails at DFX (section 12); not fixable in the module.
 
 - **Identification itself (Sumsub) and the external name check.** Both are external providers. The UI flow stops at
   the identification call, and the lifecycle test simulates a completed identification. In the real purchase
