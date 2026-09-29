@@ -298,7 +298,7 @@ confirmed and fixed:
 Documented instead of changed: purchases for ERC-4337 accounts go to the owner EOA, which usually has no gas and is
 not shown in wallet apps (as in DFX's own wallet); `getTransactionDetail` for ERC-4337 accounts needs the constructor
 `network`; ERC-1271 signature formats are not supported. At that revision, two parallel first sign-ins on one instance
-requested two signatures each. Round 26 changes detail sign-ins to single-flight; it has not been re-run yet.
+requested two signatures each. Since the shared-session change, parallel `getTransactionDetail` calls share one sign-in (tested); parallel `buy`/`sell` calls still sign in separately by design.
 
 **Tether's review skills** (`tetherto/wdk-agent-skills` at `219077f`):
 
