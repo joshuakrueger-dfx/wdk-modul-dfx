@@ -41,8 +41,22 @@ async function stopServer () {
   if (!child) return
   if (child.exitCode === null && child.signalCode === null) {
     await new Promise(resolve => {
-      const timer = setTimeout(() => child.kill('SIGKILL'), 5000)
-      child.once('exit', () => { clearTimeout(timer); resolve() })
+      let killTimer
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        killTimer = setTimeout(() => {
+          console.error(`Wallet server did not exit after SIGKILL (PID ${child.pid})`)
+          process.exitCode = 1
+          finish()
+        }, 5000)
+      }, 5000)
+      function finish () {
+        clearTimeout(timer)
+        clearTimeout(killTimer)
+        child.off('exit', finish)
+        resolve()
+      }
+      child.once('exit', finish)
       child.kill('SIGTERM')
     })
   }
@@ -153,6 +167,11 @@ try {
             const text = status?.textContent.trim()
             return status?.hidden === false && text && text !== 'Status bei DFX wird abgefragt …'
           })
+          const statusError = await page.locator('#order-status').evaluate(status => {
+            const text = status.textContent.trim()
+            return status.classList.contains('error') && !text.startsWith('Noch nicht bei DFX eingegangen') ? text : null
+          })
+          if (statusError !== null) throw new Error(`Order status failed: ${clean(statusError)}`)
           out.status = clean(await page.locator(tid('order-status')).first().innerText().catch(() => ''))
           await shot('4-orders')
         } catch (e) {

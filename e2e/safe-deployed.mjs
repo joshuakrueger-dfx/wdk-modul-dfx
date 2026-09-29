@@ -95,7 +95,11 @@ async function stopAnvil () {
   const exited = await Promise.race([childDone.then(() => true), delay(3000).then(() => false)])
   if (!exited) {
     child.kill('SIGKILL')
-    await Promise.race([childDone, delay(3000)])
+    const killed = await Promise.race([childDone.then(() => true), delay(3000).then(() => false)])
+    if (!killed) {
+      console.error(`anvil did not exit after SIGKILL (PID ${child.pid})`)
+      process.exitCode = 1
+    }
   }
 }
 
