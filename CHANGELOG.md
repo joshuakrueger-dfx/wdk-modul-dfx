@@ -63,8 +63,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Preserve a concurrently established session when another sign-in fails; use
   the token returned by each authentication for its transaction-detail request.
+- Invalidate only the token rejected by a transaction-detail HTTP 401, including
+  the single retry. Instances handle parallel calls without discarding a newer
+  session; parallel first sign-ins are not coalesced and each signs independently.
 - Preserve replay registrations when switching authentication faults and return
-  HTTP 401 with Invalid credentials for the unauthorized fault.
+  HTTP 401 with Invalid credentials for registered addresses, or HTTP 400 with
+  Invalid signature for unregistered addresses, for the unauthorized fault.
 - Fail lifecycle simulations when the backend has not reached the required payout
   boundary; validate prepared seed ownership and clarify owner-only file permissions.
 

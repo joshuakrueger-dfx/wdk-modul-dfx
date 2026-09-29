@@ -224,8 +224,10 @@ DFX's flow uses a bank transfer and payment reference. A transaction can remain
 
 A session token is kept only in private instance memory. Transaction details reuse
 it and renew it once after HTTP 401 when a signing account is available. A second
-401 is returned as `ProviderError` with `UNAUTHORIZED`. Widget calls always obtain
-a fresh token. Supported lists and quotes need no signature; details do.
+401 is returned as `ProviderError` with `UNAUTHORIZED`, and the rejected token is
+discarded if it is still current. Instances preserve newer sessions during parallel
+calls; parallel first sign-ins are not coalesced, so each signs independently.
+Widget calls always obtain a fresh token. Supported lists and quotes need no signature; details do.
 
 ### Tracking a transaction
 
@@ -403,8 +405,9 @@ npm install && npm run lint && npm run test:coverage
 Tests route injected fetch calls by HTTP method and URL. Coverage thresholds are
 100% statements, branches, functions and lines across `src/`, enforced as a
 CI gate. The coverage threshold applies to the combined unit and integration
-suites because state-dependent cases reachable only through multiple public
-calls belong in the integration suite (R3). Type declarations are maintained manually;
+suites because scenarios that build state across successive public calls belong
+in the integration suite (R3); parallel calls to the same method in one Act belong
+in unit tests. Type declarations are maintained manually;
 do not regenerate them with `build:types`.
 
 Local integration tests in `tests/integration/*.test.js` are excluded from

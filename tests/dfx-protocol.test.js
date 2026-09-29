@@ -19,6 +19,7 @@ const signMock = jest.fn()
 const transportMock = jest.fn()
 const bodyTextMock = jest.fn()
 const timerMock = jest.fn()
+const authMock = jest.fn()
 globalThis.fetch = transportMock
 
 class DummyReadOnlyAccount {
@@ -47,6 +48,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     transportMock.mockReset()
     bodyTextMock.mockReset()
     timerMock.mockReset()
+    authMock.mockReset()
   })
 
   afterEach(() => {
@@ -1437,10 +1439,10 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     arrayMessageCases('getTransactionDetail')
 
     test('uses each concurrent login token for its own transaction-detail request', async () => {
+      authMock.mockResolvedValueOnce(response({ accessToken: 'dummy-first-session' }, 201))
+        .mockResolvedValueOnce(response({ accessToken: 'dummy-second-session' }, 201))
       const { protocol } = setup({}, {
-        'POST /v1/auth': jest.fn()
-          .mockResolvedValueOnce(response({ accessToken: 'dummy-first-session' }, 201))
-          .mockResolvedValueOnce(response({ accessToken: 'dummy-second-session' }, 201))
+        'POST /v1/auth': authMock
       })
 
       const result = await Promise.all([protocol.getTransactionDetail('123'), protocol.getTransactionDetail('123')])
@@ -1626,6 +1628,21 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     test('stops after a second HTTP 401', async () => {
       const { protocol } = setup({}, { 'GET /v1/transaction/detail/single?uid=123': response({}, 401) })
       await failure(protocol.getTransactionDetail('123'), ProviderError, 'DFX HTTP 401', 'UNAUTHORIZED')
+      expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST, CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST],
+        [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
+    })
+
+    test.each([
+      [404, NoSuchElementError, undefined],
+      [503, ProviderError, 'INTERNAL_SERVER_ERROR']
+    ])('propagates HTTP %s from the renewed transaction request without another retry', async (STATUS, ERROR_CLASS, REASON) => {
+      let calls = 0
+      const { protocol } = setup({}, {
+        'GET /v1/transaction/detail/single?uid=123': () => response({}, ++calls === 1 ? 401 : STATUS)
+      })
+
+      await failure(protocol.getTransactionDetail('123'), ERROR_CLASS, `DFX HTTP ${STATUS}`, REASON)
+
       expectInteractions([CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST, CHALLENGE_REQUEST, AUTH_REQUEST, DETAIL_REQUEST],
         [['[dev]_Sign this exact message'], ['[dev]_Sign this exact message']], [[], []])
     })

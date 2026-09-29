@@ -393,9 +393,14 @@ export default class DfxProtocol extends FiatProtocol {
       data = await this._client._request(path, { token, input: true, detail: true })
     } catch (error) {
       if (!(error instanceof ProviderError) || error.reason !== ProviderErrorReason.UNAUTHORIZED || !this._hasAccount()) throw error
-      this.#token = undefined
+      if (this.#token === token) this.#token = undefined
       const { token: renewed } = await this._authenticate('detail')
-      data = await this._client._request(path, { token: renewed, input: true, detail: true })
+      try {
+        data = await this._client._request(path, { token: renewed, input: true, detail: true })
+      } catch (error) {
+        if (error instanceof ProviderError && error.reason === ProviderErrorReason.UNAUTHORIZED && this.#token === renewed) this.#token = undefined
+        throw error
+      }
     }
     record(data)
     if (data.type === 'Swap' || data.type === 'Referral') throw new NoSuchElementError('Transaction is not a DFX fiat transaction')

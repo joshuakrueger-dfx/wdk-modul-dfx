@@ -308,7 +308,8 @@ minutes. The environment step seeds a numeric referral code when none exists (se
 allows an active IBAN on one account only, and the script generates valid ones.
 
 If a required milestone is not reached (compliance Pass, an AML decision within
-the observation window, or BuyFiat input assignment), the lifecycle probe records
+the observation window, BuyFiat input assignment, or the backend boundary required
+for a simulated payout or bank execution), the lifecycle probe records
 `not_reached` as a failed step, logs `FAIL` with the reason, and exits nonzero.
 
 ### KYC in the widget

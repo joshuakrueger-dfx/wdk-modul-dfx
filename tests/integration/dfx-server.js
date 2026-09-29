@@ -103,7 +103,7 @@ export async function startServer () {
         challenges.delete(address)
         ++logins
         if (logins === 1 && faults.auth === 'unauthorized') {
-          send(401, JSON.stringify({ statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' }))
+          rejectAuthentication()
           return
         }
         // Explicit corruption probe, not a recorded successful DFX response.
