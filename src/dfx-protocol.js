@@ -519,6 +519,7 @@ export default class DfxProtocol extends FiatProtocol {
       const auth = record(await this._client._request('/v1/auth', { method: 'POST', body: JSON.stringify(body) }))
       this.#token = textField(auth.accessToken)
     } catch (error) {
+      this.#token = undefined
       if (evm && knownAddress !== undefined) this.#signers.delete(accountAddress.toLowerCase())
       throw error
     }

@@ -193,7 +193,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const result = await protocol.buy({ ...OPTIONS, recipient: NEXT_OWNER })
 
       expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe('Invalid signature')
+      expect(error.message).toBe('Invalid credentials')
       expect(error.reason).toBe('UNAUTHORIZED')
       expect(result).toEqual({ buyUrl: BUY_URL_2 })
       expect(smart.messages).toEqual([
@@ -204,6 +204,53 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`,
         `challenge:${OWNER}`, `login:${OWNER}`,
         `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${NEXT_OWNER}`, `login:${NEXT_OWNER}`
+      ])
+    })
+
+    test('transaction details authenticate the new owner after a failed owner change without reusing the old bearer', async () => {
+      await resetServer({ completedDetail: true })
+      const account = await freshAccount()
+      const nextAccount = await freshAccount(1)
+      const OWNER = (await account.getAddress()).toLowerCase()
+      const NEXT_OWNER = (await nextAccount.getAddress()).toLowerCase()
+      const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
+      const authResponses = []
+      const smart = new DummySmartAccount(account)
+      const protocol = new DfxProtocol(smart, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          const response = await LOCAL_CONFIG.fetch(url, init)
+          if (init.method === 'POST' && new URL(url).pathname === '/v1/auth') {
+            authResponses.push({ status: response.status, body: await response.clone().json() })
+          }
+          return response
+        }
+      })
+
+      const initialDetail = await protocol.getTransactionDetail(UID)
+      smart.account = nextAccount
+      const error = await protocol.buy(OPTIONS).catch(error => error)
+      const result = await protocol.getTransactionDetail(UID)
+
+      expect(initialDetail).toEqual(EXPECTED_DETAIL)
+      expect(error.constructor).toBe(ProviderError)
+      expect(error.message).toBe('Invalid credentials')
+      expect(error.reason).toBe('UNAUTHORIZED')
+      expect(result).toEqual(EXPECTED_DETAIL)
+      expect(authResponses).toEqual([
+        { status: 201, body: { accessToken: DUMMY_TOKEN } },
+        { status: 401, body: { statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' } },
+        { status: 201, body: { accessToken: `${DUMMY_TOKEN}.2` } }
+      ])
+      expect(smart.messages).toEqual([
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER), challengeMessage(OWNER),
+        challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(NEXT_OWNER)
+      ])
+      expect(await serverControl('/__events')).toEqual([
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${OWNER}`, `login:${OWNER}`, DETAIL_EVENT,
+        `challenge:${OWNER}`, `login:${OWNER}`,
+        `challenge:${DUMMY_SMART_ADDRESS}`, `challenge:${NEXT_OWNER}`, `login:${NEXT_OWNER}`,
+        `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}.2`
       ])
     })
 
@@ -408,7 +455,17 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const account = await freshAccount()
       const OWNER = (await account.getAddress()).toLowerCase()
       const smart = new DummyFirstSignature(account, 'invalid-signature')
-      const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
+      const authResponses = []
+      const protocol = new DfxProtocol(smart, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          const response = await LOCAL_CONFIG.fetch(url, init)
+          if (init.method === 'POST' && new URL(url).pathname === '/v1/auth') {
+            authResponses.push({ status: response.status, body: await response.clone().json() })
+          }
+          return response
+        }
+      })
 
       const initialError = await protocol.sell(OPTIONS).catch(error => error)
       const result = await protocol.buy(OPTIONS)
@@ -417,6 +474,10 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expect(initialError.message).toBe('Invalid signature')
       expect(initialError.reason).toBe('UNAUTHORIZED')
       expect(result).toEqual({ buyUrl: BUY_URL })
+      expect(authResponses).toEqual([
+        { status: 400, body: { statusCode: 400, message: 'Invalid signature', error: 'Bad Request' } },
+        { status: 201, body: { accessToken: DUMMY_TOKEN } }
+      ])
       expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(DUMMY_SMART_ADDRESS), challengeMessage(OWNER)])
       expect(await serverControl('/__events')).toEqual([
         `challenge:${DUMMY_SMART_ADDRESS}`, `login:${DUMMY_SMART_ADDRESS}`,

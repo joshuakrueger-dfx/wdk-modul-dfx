@@ -357,8 +357,10 @@ same fallback.
   After successful authentication with a valid access token, the instance caches
   the owner per account address, so later logins need one
   signature. A failed authentication POST or invalid access token clears that
-  account's cached owner; the next login recovers it again, without retrying the
-  failed login. EOA accounts need only one signature from the start. Recovery is
+  account's cached owner and the session token; the next login recovers the owner
+  again, without retrying the failed login. A subsequent transaction lookup
+  authenticates again instead of using the previous session. EOA accounts need
+  only one signature from the start. Recovery is
   limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
   Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet
   (case-insensitive). Accounts whose `sign` does not return an EIP-191 signature

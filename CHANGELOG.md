@@ -61,8 +61,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
-- Clear an account's cached EVM owner when its authentication POST fails or returns
-  an invalid access token; recover the signer on the next login without an automatic retry.
+- Clear the session token and an account's cached EVM owner when its authentication
+  POST fails or returns an invalid access token; recover the signer on the next login
+  without an automatic retry, including the next transaction lookup.
 - Treat empty asset descriptions like null, returning an undefined display name.
 - Authenticate EVM ERC-4337 accounts using the EIP-191 signing owner, as in DFX's
   own wallet, with signature-only Noble recovery and an instance-local owner cache.

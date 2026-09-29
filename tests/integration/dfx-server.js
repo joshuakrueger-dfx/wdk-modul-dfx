@@ -38,6 +38,7 @@ export async function startServer () {
   }
   const challenges = new Map()
   const tokens = new Set()
+  const registeredAddresses = new Set()
   const events = []
   let faults = {}
   let logins = 0
@@ -55,6 +56,7 @@ export async function startServer () {
       if (request.method === 'POST' && url.pathname === '/__reset') {
         challenges.clear()
         tokens.clear()
+        registeredAddresses.clear()
         events.length = 0
         logins = 0
         challengeCount = 0
@@ -71,7 +73,7 @@ export async function startServer () {
         const address = url.searchParams.get('address')
         events.push(`challenge:${address}`)
         if (++challengeCount === 2 && faults.ownerChallenge) {
-          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          send(401, JSON.stringify({ statusCode: 401, message: 'Unauthorized', error: 'Unauthorized' }))
           return
         }
         const raw = responses.challenge.raw.replaceAll(ADDRESS_PLACEHOLDER, address)
@@ -85,26 +87,34 @@ export async function startServer () {
           throw new Error('Unrecorded DFX auth request: expected address, signature and blockchain Ethereum')
         }
         const address = typeof auth.address === 'string' ? auth.address.toLowerCase() : ''
+        const rejectAuthentication = () => {
+          if (registeredAddresses.has(address)) {
+            send(401, JSON.stringify({ statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' }))
+          } else {
+            send(400, JSON.stringify({ statusCode: 400, message: 'Invalid signature', error: 'Bad Request' }))
+          }
+        }
         events.push(`login:${auth.address}`)
         const message = challenges.get(address)
         if (!message || !validSignature(message, auth.signature, address)) {
-          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          rejectAuthentication()
           return
         }
         challenges.delete(address)
         ++logins
         if (logins === 1 && faults.auth === 'unauthorized') {
-          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          rejectAuthentication()
           return
         }
         // Explicit corruption probe, not a recorded successful DFX response.
         if (logins === 1 && faults.auth === 'missing token') {
-          send(200, '{}')
+          send(201, '{}')
           return
         }
         const token = logins === 1 ? DUMMY_TOKEN : `${DUMMY_TOKEN}.${logins}`
         tokens.add(token)
-        send(200, JSON.stringify({ accessToken: token }))
+        registeredAddresses.add(address)
+        send(201, JSON.stringify({ accessToken: token }))
         return
       }
       if (request.method === 'GET' && url.pathname === '/v1/transaction/detail/single') {
@@ -114,7 +124,12 @@ export async function startServer () {
           tokens.clear()
         }
         if (!tokens.has(request.headers.authorization?.slice(7))) {
-          send(401, JSON.stringify({ message: 'Invalid signature' }))
+          send(401, JSON.stringify({ statusCode: 401, message: 'Unauthorized', error: 'Unauthorized' }))
+          return
+        }
+        // Explicit synthetic success, not a recorded sandbox transaction.
+        if (faults.completedDetail) {
+          send(200, JSON.stringify({ type: 'Buy', state: 'Completed', inputAsset: 'CHF', outputAsset: 'USDT', outputBlockchain: 'Ethereum' }))
           return
         }
       }
