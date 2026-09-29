@@ -67,9 +67,14 @@ async function rpc (method, params = []) {
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
     signal: AbortSignal.any([stop.signal, AbortSignal.timeout(15000)])
   })
-  check(response.ok, `RPC HTTP failure for ${method}`)
+  check(response.ok, `RPC HTTP failure for ${method}: ${response.status}`)
   const body = await response.json()
-  check(!body.error && Object.hasOwn(body, 'result'), `RPC rejected ${method}`)
+  if (body.error) {
+    const code = String(body.error.code).replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]')
+    const message = String(body.error.message ?? '').replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').slice(0, 200)
+    throw new ProbeFailure(`RPC rejected ${method}: ${code} ${message}`)
+  }
+  check(Object.hasOwn(body, 'result'), `RPC rejected ${method}`)
   return body.result
 }
 
@@ -195,18 +200,30 @@ async function run () {
     await rpc('anvil_setBalance', [owner, '0x56bc75e2d63100000']) // 100 POL on fork only.
     await rpc('anvil_impersonateAccount', [owner])
     let hash
+    let primaryFailed = false
     try {
       hash = await rpc('eth_sendTransaction', [{ from: owner, to: smartAccount.factoryAddress, data: smartAccount.factoryData, value: '0x0', gas: '0x7a1200' }])
       let lastError
       const receipt = await waitFor(async () => {
-        try { return await rpc('eth_getTransactionReceipt', [hash]) } catch (error) {
+        try {
+          const receipt = await rpc('eth_getTransactionReceipt', [hash])
+          lastError = undefined
+          return receipt
+        } catch (error) {
           lastError = String(error?.message ?? error).replace(/https?:\/\/[^\s"'<>]+/gi, '[RPC URL]').slice(0, 300)
           return false
         }
       }, 60000, () => lastError ? `Deployment receipt timed out; last RPC error: ${lastError}` : 'Deployment receipt timed out')
       check(receipt.status === '0x1', 'Safe deployment transaction reverted')
+    } catch (error) {
+      primaryFailed = true
+      throw error
     } finally {
-      await rpc('anvil_stopImpersonatingAccount', [owner])
+      try {
+        await rpc('anvil_stopImpersonatingAccount', [owner])
+      } catch (error) {
+        if (!primaryFailed) throw error
+      }
     }
     check(await rpc('eth_getCode', [safe, 'latest']) !== '0x', 'Safe has no deployed bytecode')
     check(await SafeAccount030.isDeployed(safe, rpcUrl), 'Package does not recognize deployed Safe')
