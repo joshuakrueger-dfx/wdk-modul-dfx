@@ -28,6 +28,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Accept bigint HTTP timeouts, clarify API documentation and strengthen deadline callback tests.
+
 - Move stateful owner-cache and session scenarios to the local replay integration
   suite with real WDK EVM signatures, deterministic accounts and per-test resets.
   Compare complete catalogs with an independently supplied expectation fixture.

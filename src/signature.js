@@ -7,7 +7,10 @@ import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/
 
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
-/** Recover an EIP-191 personal-sign owner from signature bytes only. */
+/**
+ * Recovers the EIP-191 personal-sign signer address from a message and its signature.
+ * Returns undefined for unrecognized or invalid signatures.
+ */
 export function recoverEvmAddress (message, signature) {
   if (!/^(?:0x)?[0-9a-f]{130}$/i.test(signature)) return undefined
   try {

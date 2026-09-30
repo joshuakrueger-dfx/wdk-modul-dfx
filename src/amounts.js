@@ -4,6 +4,7 @@
 import Big from 'big.js'
 import { ProviderError, ValueError } from '@tetherto/wdk-wallet/protocols'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
+import { RATE_SIGNIFICANT_DIGITS } from './constants.js'
 
 // Keep arithmetic configuration independent of the application's Big constructor.
 const Decimal = Big()
@@ -54,7 +55,7 @@ export function divideAmounts (numerator, denominator) {
   // Compare normalized significands to determine the quotient's exact exponent.
   let exponent = fiat.e - crypto.e
   if (fiat.lt(crypto.times(new Decimal(`1e${exponent}`)))) exponent--
-  const shift = 17 - exponent
+  const shift = RATE_SIGNIFICANT_DIGITS - 1 - exponent
   const significand = fiat.times(new Decimal(`1e${shift}`)).div(crypto)
   return significand.times(new Decimal(`1e${-shift}`)).toFixed()
 }

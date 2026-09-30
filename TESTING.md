@@ -5,16 +5,18 @@ does not prove. Every result below was produced by running the named command. No
 unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
-  - **The last commit that changes this sentence (2026-09-29):** lint, unit, integration, coverage and mutation layers —
+  - **The last commit that changes this sentence (2026-09-30):** lint, unit, integration, coverage and mutation layers —
     the first four rows of the summary table. It includes these library changes made after `27dd624`: one shared
     transaction-detail session per instance, established by a single sign-in that concurrent `getTransactionDetail`
     calls share (first sign-in and renewal after HTTP 401); `buy`/`sell` sign in fresh and never touch that session; a
     401 clears the session only if it is still the rejected token, and a renewed token rejected with 401 is dropped; a
     cached signing owner is dropped when sign-in fails; an empty asset description is treated like a missing one; the
     check of `recipient`/`refundAddress` before sign-in only runs when the sign-in address is the account address
-    itself (non-EVM or EOA). Integration expectations use address and signature literals computed independently with
+    itself (non-EVM or EOA); the HTTP timeout also accepts a `bigint` (fifth pass of the review skills, section 10).
+    Integration expectations use address and signature literals computed independently with
     ethers for the public test phrase; no wallet call computes an expected value.
-  - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the remaining rows of the summary table,
+  - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the remaining rows of the summary table
+    (the only later library change is the `bigint` timeout above, plus documentation and named constants),
     re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
     byte for byte with the repository before the run. Section 11 keeps the earlier run against `ec9b788`.
   - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
@@ -39,9 +41,9 @@ unless it says so.
 | Layer | Command | Result |
 | --- | --- | --- |
 | Integration, local | `npm run test:integration` | 45/45 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests | `npm run lint && npm test` | lint output empty; 701/701 tests in 1 suite |
-| Coverage (unit + integration) | `npm run test:coverage` | 746/746 tests in 2 suites; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 52/52 mutations detected across unit and integration suites, each by 1–609 tests |
+| Unit tests | `npm run lint && npm test` | lint output empty; 704/704 tests in 1 suite |
+| Coverage (unit + integration) | `npm run test:coverage` | 750/750 tests in 2 suites; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 57/57 mutations detected across unit and integration suites, each by 1–233 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -53,14 +55,14 @@ unless it says so.
 | Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules) |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
 | Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
-| Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; second test-skill pass applied |
+| Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; fifth pass of all skills on `498d4e6` (2026-09-30) |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
 
 ## 1. Unit tests
 
-`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 701 tests, all passing;
-`npm run test:coverage` adds the integration suite (746 tests together) and reaches 100 % coverage in all four categories. The
+`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 704 tests, all passing;
+`npm run test:coverage` adds the integration suite (750 tests together) and reaches 100 % coverage in all four categories. The
 session and signer-cache scenarios that build state across successive public calls live in the integration suite
 (skill rule R3). Parallel calls to the same method within one Act belong in unit tests. All
 unit tests use an injected `fetch` routed by method and URL and cover
@@ -71,7 +73,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 52 were detected. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 57 were detected. The fifth review pass added five: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision). The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -349,7 +351,13 @@ requested two signatures each. Since the shared-session change, parallel `getTra
   `wdk-review-jsdocs` 0 violations (30 of 39 met, 9 not applicable), `wdk-review-tests` 7 small violations (subsumed
   assertions, arrange after act, constant scope, `DUMMY_` naming, one `describe` name, one integration file and one
   file per method). All fixed in the following commit; the session scenarios now live in
-  `tests/integration/module.test.js`. No fifth pass has been run.
+  `tests/integration/module.test.js`.
+- Fifth pass of all three skills and the code of conduct on `498d4e6` (2026-09-30, one reviewer per skill; the test skill in two parts):
+  - `wdk-review-jsdocs`: 22 reported, 21 fixed: `/** @private */` on three private fields; six type descriptions that listed their fields; defaults stated for `config` and `options`; overload-specific parameter names (`readOnlyAccount`, `signingAccount`); `buy`/`sell` return an object with the URL, not the URL; the signature helper description; R33 — `timeout` accepts `number | bigint`. Not changed: `_request` keeps `@internal` (R6 allows `@internal` as the minimal block; it is called from `DfxProtocol`).
+  - `wdk-review-dts`: 1 reported (TD6: internal modules neither `_`-prefixed nor under `src/internal/`). Not changed: the rule requires that internal types stay out of `types/`, via `tsconfig.json` exclusions or `@internal`; the five internal modules are excluded and `types/src` contains only `dfx-protocol.d.ts`. `tsc --strict` over `types/` with a consumer probe exits 0.
+  - `wdk-review-tests`: integration suite 0 violations; unit suite 1 (R3, a test duplicating a case of the preceding table) — removed.
+  - Code of conduct: 6 reported, all fixed: named constants for the timer maximum, the asset-decimals limit and the rate precision (C001); a timer test split into act then assert (T001); two timer tests now run the callback and check the abort and the exact delay (T003). P001/P002 (one PR per method, agreed spec first) as decided: one PR in a separate repository.
+  - `.d.ts` updated by hand with every JSDoc change (TD1).
 
 ## 11. E2E re-run against `ec9b788` (2026-09-28)
 

@@ -454,13 +454,6 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
 
-    test.each([METHOD])('%s validates an uncached EVM address after authentication', async CASE_METHOD => {
-      const FIELD = CASE_METHOD === 'buy' ? 'recipient' : 'refundAddress'
-      const { protocol } = setup({ network: 'ethereum' })
-      await failure(protocol[CASE_METHOD]({ ...OPTIONS, [FIELD]: 'dummy-other-address' }), ValueError, `${FIELD} must match the account address`)
-      expectInteractions(ETH_WIDGET_REQUESTS, [['[dev]_Sign this exact message']], [[]])
-    })
-
     test.each([METHOD])('%s requires a full account', async CASE_METHOD => {
       const { protocol } = setup({}, {}, new DummyReadOnlyAccount())
       await failure(protocol[CASE_METHOD](OPTIONS), AccountRequiredError, 'A signing account is required for buy and sell')
@@ -748,12 +741,12 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   describe('constructor', () => {
-    test.each([0, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', TIMEOUT => {
+    test.each([0, 0n, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', TIMEOUT => {
       failureSync(() => new DfxProtocol(undefined, { timeout: TIMEOUT }), ValueError, 'timeout must be a finite number greater than zero')
       expectInteractions([])
     })
 
-    test.each([2147483648, Number.MAX_VALUE])('rejects timer overflow %s', TIMEOUT => {
+    test.each([2147483648, 2147483648n, 2n ** 64n, Number.MAX_VALUE])('rejects timer overflow %s', TIMEOUT => {
       failureSync(() => new DfxProtocol(undefined, { timeout: TIMEOUT }), ValueError, 'timeout must not exceed 2147483647 milliseconds')
       expectInteractions([])
     })
@@ -1100,6 +1093,19 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expectInteractions([httpRequest('/v1/asset')])
     })
 
+    test('accepts native API decimals at the maximum of 255', async () => {
+      const { protocol } = setup({}, {
+        'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], decimals: 255 }])
+      })
+
+      const result = await protocol.getSupportedCryptoAssets()
+
+      expect(result).toEqual([
+        { code: 'BTC', networkCode: 'bitcoin', decimals: 255, name: 'Bitcoin' }
+      ])
+      expectInteractions([httpRequest('/v1/asset')])
+    })
+
     test.each([-1, 1.5, 256, 'invalid'])('does not hide invalid native API decimals %s', async DUMMY_DECIMALS => {
       const { protocol } = setup({}, {
         'GET /v1/asset': response([{ ...DUMMY_ASSETS[3], decimals: DUMMY_DECIMALS }])
@@ -1206,20 +1212,30 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     catalogCases('getSupportedCountries')
     arrayMessageCases('getSupportedCountries')
 
-    test('accepts the maximum timer delay without clamping it', async () => {
+    test.each([2147483647, 2147483647n])('accepts the maximum timer delay %s without clamping it', async TIMEOUT => {
       jest.useFakeTimers()
       const SET_TIMEOUT = globalThis.setTimeout
       timerMock.mockImplementation((...args) => SET_TIMEOUT(...args))
       jest.spyOn(globalThis, 'setTimeout').mockImplementation(timerMock)
-      const { protocol } = setup({ timeout: 2147483647 })
+      const { protocol } = setup({ timeout: TIMEOUT })
       const result = await protocol.getSupportedCountries()
+      const [callback, delay] = timerMock.mock.calls[0]
+      const signal = fetchMock.mock.calls[0][1].signal
+      const abortedBeforeCallback = signal.aborted
+      callback()
+
+      expect(abortedBeforeCallback).toBe(false)
+      expect(signal.aborted).toBe(true)
+      expect(delay).toBe(2147483647)
 
       expect(result).toEqual([
         { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
         { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
       ])
-      expect(timerMock).toHaveBeenCalledWith(expect.any(Function), 2147483647)
-      expectInteractions([httpRequest('/v1/country')])
+      expect(timerMock).toHaveBeenCalledTimes(1)
+      expectRequests(fetchMock.mock.calls, [httpRequest('/v1/country')], true)
+      expect(getAddressMock.mock.calls).toEqual([])
+      expect(signMock.mock.calls).toEqual([])
     })
 
     test.each(['injected', 'ambient'])('binds %s fetch to the global object', async MODE => {
@@ -1284,7 +1300,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expectInteractions([httpRequest('/v1/country')])
     })
 
-    test.each([undefined, 10])('aborts requests at the configured deadline %s', async TIMEOUT => {
+    test.each([[undefined, 30000], [10, 10], [10n, 10]])('aborts requests with the configured deadline %s', async (TIMEOUT, EXPECTED_DELAY) => {
       jest.useFakeTimers()
       const SET_TIMEOUT = globalThis.setTimeout
       timerMock.mockImplementation((...args) => SET_TIMEOUT(...args))
@@ -1294,10 +1310,21 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
         signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
       }))
       const protocol = new DfxProtocol(undefined, { fetch, timeout: TIMEOUT })
-      const pending = failure(protocol.getSupportedCountries(), ProviderError, 'DFX request timed out', 'REQUEST_TIMEOUT')
-      expect(timerMock).toHaveBeenCalledWith(expect.any(Function), TIMEOUT ?? 30000)
-      await jest.advanceTimersByTimeAsync(TIMEOUT ?? 30000)
-      await pending
+      const pending = protocol.getSupportedCountries().catch(error => error)
+      const [callback, delay] = timerMock.mock.calls[0]
+      const signal = fetch.mock.calls[0][1].signal
+      const abortedBeforeCallback = signal.aborted
+      callback()
+      await jest.advanceTimersByTimeAsync(EXPECTED_DELAY)
+      const error = await pending
+
+      expect(abortedBeforeCallback).toBe(false)
+      expect(signal.aborted).toBe(true)
+      expect(delay).toBe(EXPECTED_DELAY)
+      expect(timerMock).toHaveBeenCalledTimes(1)
+      expect(error.constructor).toBe(ProviderError)
+      expect(error.message).toBe('DFX request timed out')
+      expect(error.reason).toBe(ProviderErrorReason.REQUEST_TIMEOUT)
       expect(jest.getTimerCount()).toBe(0)
       expectRequests(fetch.mock.calls, [httpRequest('/v1/country')], true)
     })

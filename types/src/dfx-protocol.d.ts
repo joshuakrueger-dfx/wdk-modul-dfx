@@ -12,11 +12,11 @@ export interface DfxProtocolConfig {
     language?: string;
     /** HTTP implementation called with globalThis as receiver. Defaults to globalThis.fetch. */
     fetch?: typeof fetch;
-    /** Finite positive HTTP request deadline in milliseconds, at most 2147483647. Defaults to 30000. */
-    timeout?: number;
+    /** Finite positive HTTP request deadline in milliseconds, at most 2147483647 (default: 30,000). */
+    timeout?: number | bigint;
 }
 
-/** Per-operation network selection and wallet transaction identifier. */
+/** Configuration for a single DFX widget session. */
 export interface DfxTradeConfig {
     /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to and must match the constructor network. */
     network?: string;
@@ -30,7 +30,7 @@ export interface DfxTradeOptions {
     config?: DfxTradeConfig;
 }
 
-/** Per-quote network selection. */
+/** Configuration for a single DFX quote. */
 export interface DfxQuoteConfig {
     /** Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network. */
     network?: string;
@@ -42,13 +42,13 @@ export interface DfxQuoteOptions {
     config?: DfxQuoteConfig;
 }
 
-/** Purchase amounts and delivery address with DFX widget configuration. */
+/** Options for a DFX purchase widget session. */
 export type DfxBuyOptions = BuyOptions & DfxTradeOptions;
-/** Sale amounts and refund address with DFX widget configuration. */
+/** Options for a DFX sale widget session. */
 export type DfxSellOptions = SellOptions & DfxTradeOptions;
-/** Indicative purchase amounts and network selection without a delivery address. */
+/** Options for an indicative DFX purchase quote. */
 export type DfxBuyQuoteOptions = Omit<BuyOptions, 'recipient'> & DfxQuoteOptions;
-/** Indicative sale amounts and network selection without a refund address. */
+/** Options for an indicative DFX sale quote. */
 export type DfxSellQuoteOptions = Omit<SellOptions, 'refundAddress'> & DfxQuoteOptions;
 
 /** Provides DFX fiat quotes, widget URLs and transaction status. */
@@ -58,7 +58,7 @@ export default class DfxProtocol extends FiatProtocol {
      *
      * @overload
      * @param {undefined} [account] - Omit to access only quotes and supported lists.
-     * @param {DfxProtocolConfig} [config] - API and widget configuration.
+     * @param {DfxProtocolConfig} [config] - API and widget configuration (default: `{}`).
      * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
      * @throws {ValueError} If network is supplied but is empty or whitespace-only.
@@ -71,8 +71,8 @@ export default class DfxProtocol extends FiatProtocol {
      * Creates a new read-only interface to the protocol.
      *
      * @overload
-     * @param {IWalletAccountReadOnly} account - Read-only account; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
-     * @param {DfxProtocolConfig} [config] - API and widget configuration.
+     * @param {IWalletAccountReadOnly} readOnlyAccount - Read-only account; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+     * @param {DfxProtocolConfig} [config] - API and widget configuration (default: `{}`).
      * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
      * @throws {ValueError} If network is supplied but is empty or whitespace-only.
@@ -80,13 +80,13 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If publicKey is supplied but is empty or whitespace-only.
      * @throws {ValueError} If language is supplied but is empty or whitespace-only.
      */
-    constructor(account: IWalletAccountReadOnly, config?: DfxProtocolConfig);
+    constructor(readOnlyAccount: IWalletAccountReadOnly, config?: DfxProtocolConfig);
     /**
      * Creates a new interface to the protocol.
      *
      * @overload
-     * @param {IWalletAccount} account - Account used to sign DFX authentication messages.
-     * @param {DfxProtocolConfig} [config] - API and widget configuration.
+     * @param {IWalletAccount} signingAccount - Account used to sign DFX authentication messages.
+     * @param {DfxProtocolConfig} [config] - API and widget configuration (default: `{}`).
      * @throws {ValueError} If timeout is non-finite or non-positive.
      * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
      * @throws {ValueError} If network is supplied but is empty or whitespace-only.
@@ -94,7 +94,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If publicKey is supplied but is empty or whitespace-only.
      * @throws {ValueError} If language is supplied but is empty or whitespace-only.
      */
-    constructor(account: IWalletAccount, config?: DfxProtocolConfig);
+    constructor(signingAccount: IWalletAccount, config?: DfxProtocolConfig);
     /**
      * Generates a URL for a user to purchase a crypto asset with fiat currency.
      * Each opening uses a fresh authenticated session.
@@ -104,7 +104,7 @@ export default class DfxProtocol extends FiatProtocol {
      * subclasses and other account failures become ProviderError with the original cause.
      *
      * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
-     * @returns {Promise<BuyResult>} The purchase widget URL.
+     * @returns {Promise<BuyResult>} An object with the purchase widget URL (`buyUrl`).
      * @throws {AccountRequiredError} If a signing account is unavailable.
      * @throws {AccountRequiredError} If an account call reports a missing account.
      * @throws {ValueError} If an account call rejects a value.
@@ -159,7 +159,7 @@ export default class DfxProtocol extends FiatProtocol {
      * subclasses and other account failures become ProviderError with the original cause.
      *
      * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
-     * @returns {Promise<SellResult>} The sale widget URL.
+     * @returns {Promise<SellResult>} An object with the sale widget URL (`sellUrl`).
      * @throws {AccountRequiredError} If a signing account is unavailable.
      * @throws {AccountRequiredError} If an account call reports a missing account.
      * @throws {ValueError} If an account call rejects a value.
@@ -214,7 +214,7 @@ export default class DfxProtocol extends FiatProtocol {
      * all other account failures become ProviderError with the original cause.
      *
      * @param {string} txId - DFX transaction UID or wallet-assigned external transaction ID.
-     * @param {Object} [options] - Transaction lookup options.
+     * @param {Object} [options] - Selects lookup by DFX transaction UID or wallet-assigned external transaction ID (default: `{}`).
      * @param {'uid' | 'externalTransactionId'} [options.idType] - Identifier type; defaults to uid.
      * @returns {Promise<FiatTransactionDetail>} Normalized transaction status and asset codes.
      * @throws {ValueError} If the UID is empty or whitespace-only.

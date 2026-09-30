@@ -9,7 +9,7 @@ import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxClient from './dfx-client.js'
 import { normalizeSignature, recoverEvmAddress } from './signature.js'
 import { decimal, displayAmount, divideAmounts, minorUnits, positiveAmount, unexpected } from './amounts.js'
-import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS, NATIVE_DECIMALS } from './constants.js'
+import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS, MAX_ASSET_DECIMALS, MAX_TIMEOUT_MS, NATIVE_DECIMALS } from './constants.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccount} IWalletAccount */
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccountReadOnly} IWalletAccountReadOnly */
@@ -33,11 +33,11 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  * @property {string} [publicKey] - Public key sent as key during authentication. No default.
  * @property {string} [language] - Widget language code. Defaults to en.
  * @property {typeof fetch} [fetch] - HTTP implementation called with globalThis as receiver. Defaults to globalThis.fetch.
- * @property {number} [timeout] - Finite positive HTTP request deadline in milliseconds, at most 2147483647. Defaults to 30000.
+ * @property {number | bigint} [timeout] - Finite positive HTTP request deadline in milliseconds, at most 2147483647 (default: 30,000).
  */
 
 /**
- * Per-operation network selection and wallet transaction identifier.
+ * Configuration for a single DFX widget session.
  *
  * @typedef {Object} DfxTradeConfig
  * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to and must match the constructor network.
@@ -52,7 +52,7 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  */
 
 /**
- * Per-quote network selection.
+ * Configuration for a single DFX quote.
  *
  * @typedef {Object} DfxQuoteConfig
  * @property {string} [network] - Non-empty DFX blockchain name, compared case-insensitively. Defaults to the constructor network.
@@ -66,22 +66,22 @@ import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERROR
  */
 
 /**
- * Purchase amounts and delivery address with DFX widget configuration.
+ * Options for a DFX purchase widget session.
  *
  * @typedef {BuyOptions & DfxTradeOptions} DfxBuyOptions
  */
 /**
- * Sale amounts and refund address with DFX widget configuration.
+ * Options for a DFX sale widget session.
  *
  * @typedef {SellOptions & DfxTradeOptions} DfxSellOptions
  */
 /**
- * Indicative purchase amounts and network selection without a delivery address.
+ * Options for an indicative DFX purchase quote.
  *
  * @typedef {Omit<BuyOptions, 'recipient'> & DfxQuoteOptions} DfxBuyQuoteOptions
  */
 /**
- * Indicative sale amounts and network selection without a refund address.
+ * Options for an indicative DFX sale quote.
  *
  * @typedef {Omit<SellOptions, 'refundAddress'> & DfxQuoteOptions} DfxSellQuoteOptions
  */
@@ -129,7 +129,7 @@ function hasDecimals (asset) {
 
 function assetDecimals (asset) {
   const value = decimal(resolvedDecimals(asset))
-  if (value.lt(0) || value.gt(255) || !value.eq(value.round(0))) throw unexpected('Invalid asset decimals')
+  if (value.lt(0) || value.gt(MAX_ASSET_DECIMALS) || !value.eq(value.round(0))) throw unexpected('Invalid asset decimals')
   return Number(value.toFixed())
 }
 
@@ -190,7 +190,7 @@ export default class DfxProtocol extends FiatProtocol {
    *
    * @overload
    * @param {undefined} [account] - Omit to access only quotes and supported lists.
-   * @param {DfxProtocolConfig} [config] - API and widget configuration.
+   * @param {DfxProtocolConfig} [config] - API and widget configuration (default: `{}`).
    * @throws {ValueError} If timeout is non-finite or non-positive.
    * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
    * @throws {ValueError} If network is supplied but is empty or whitespace-only.
@@ -202,8 +202,8 @@ export default class DfxProtocol extends FiatProtocol {
    * Creates a new read-only interface to the protocol.
    *
    * @overload
-   * @param {IWalletAccountReadOnly} account - Read-only account; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
-   * @param {DfxProtocolConfig} [config] - API and widget configuration.
+   * @param {IWalletAccountReadOnly} readOnlyAccount - Read-only account; buy/sell throw AccountRequiredError and getTransactionDetail throws ProviderError.
+   * @param {DfxProtocolConfig} [config] - API and widget configuration (default: `{}`).
    * @throws {ValueError} If timeout is non-finite or non-positive.
    * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
    * @throws {ValueError} If network is supplied but is empty or whitespace-only.
@@ -215,8 +215,8 @@ export default class DfxProtocol extends FiatProtocol {
    * Creates a new interface to the protocol.
    *
    * @overload
-   * @param {IWalletAccount} account - Account used to sign DFX authentication messages.
-   * @param {DfxProtocolConfig} [config] - API and widget configuration.
+   * @param {IWalletAccount} signingAccount - Account used to sign DFX authentication messages.
+   * @param {DfxProtocolConfig} [config] - API and widget configuration (default: `{}`).
    * @throws {ValueError} If timeout is non-finite or non-positive.
    * @throws {ValueError} If timeout exceeds 2147483647 milliseconds.
    * @throws {ValueError} If network is supplied but is empty or whitespace-only.
@@ -226,14 +226,15 @@ export default class DfxProtocol extends FiatProtocol {
    */
   constructor (account, config = {}) {
     super(account)
-    if (config.timeout !== undefined && (!Number.isFinite(config.timeout) || config.timeout <= 0)) {
+    const timeout = typeof config.timeout === 'bigint' ? Number(config.timeout) : config.timeout
+    if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) {
       throw new ValueError('timeout must be a finite number greater than zero')
     }
-    if (config.timeout > 2147483647) throw new ValueError('timeout must not exceed 2147483647 milliseconds')
+    if (timeout > MAX_TIMEOUT_MS) throw new ValueError('timeout must not exceed 2147483647 milliseconds')
     for (const field of ['network', 'wallet', 'publicKey', 'language']) optionalString(config[field], field)
     const environment = config.environment ?? 'production'
     /** @private */
-    this._config = { ...config, environment, network: config.network?.toLowerCase() }
+    this._config = { ...config, timeout, environment, network: config.network?.toLowerCase() }
     /** @private */
     this._client = new DfxClient(this._config)
     /** @private */
@@ -249,7 +250,7 @@ export default class DfxProtocol extends FiatProtocol {
    * subclasses and other account failures become ProviderError with the original cause.
    *
    * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
-   * @returns {Promise<BuyResult>} The purchase widget URL.
+   * @returns {Promise<BuyResult>} An object with the purchase widget URL (`buyUrl`).
    * @throws {AccountRequiredError} If a signing account is unavailable.
    * @throws {AccountRequiredError} If an account call reports a missing account.
    * @throws {ValueError} If an account call rejects a value.
@@ -310,7 +311,7 @@ export default class DfxProtocol extends FiatProtocol {
    * subclasses and other account failures become ProviderError with the original cause.
    *
    * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
-   * @returns {Promise<SellResult>} The sale widget URL.
+   * @returns {Promise<SellResult>} An object with the sale widget URL (`sellUrl`).
    * @throws {AccountRequiredError} If a signing account is unavailable.
    * @throws {AccountRequiredError} If an account call reports a missing account.
    * @throws {ValueError} If an account call rejects a value.
@@ -371,7 +372,7 @@ export default class DfxProtocol extends FiatProtocol {
    * all other account failures become ProviderError with the original cause.
    *
    * @param {string} txId - DFX transaction UID or wallet-assigned external transaction ID.
-   * @param {Object} [options] - Transaction lookup options.
+   * @param {Object} [options] - Selects lookup by DFX transaction UID or wallet-assigned external transaction ID (default: `{}`).
    * @param {'uid' | 'externalTransactionId'} [options.idType] - Identifier type; defaults to uid.
    * @returns {Promise<FiatTransactionDetail>} Normalized transaction status and asset codes.
    * @throws {ValueError} If the UID is empty or whitespace-only.

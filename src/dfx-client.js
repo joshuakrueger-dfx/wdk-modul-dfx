@@ -21,8 +21,11 @@ function attributableInput (data, detail) {
 export default class DfxClient {
   /** @internal */
   constructor (config) {
+    /** @private */
     this._fetch = config.fetch ?? globalThis.fetch
+    /** @private */
     this._timeout = config.timeout ?? 30000
+    /** @private */
     this._base = config.environment === 'sandbox' ? 'https://dev.api.dfx.swiss' : 'https://api.dfx.swiss'
   }
 

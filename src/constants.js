@@ -1,6 +1,10 @@
 // Copyright 2026 DFX AG
 // SPDX-License-Identifier: Apache-2.0
 
+export const MAX_TIMEOUT_MS = 2147483647
+export const MAX_ASSET_DECIMALS = 255
+export const RATE_SIGNIFICANT_DIGITS = 18
+
 // ISO 4217 minor units. No default: unlisted currencies are unsupported.
 export const FIAT_DECIMALS = Object.freeze({
   AED: 2,
