@@ -82,7 +82,7 @@ no user-supplied environment variables and run in `npm run test:coverage`.
 | `publicKey` | unset | Public key sent as `key` during authentication (e.g. Arweave, Cardano, Internet Computer) |
 | `language` | `'en'` | Widget `lang` value |
 | `fetch` | `globalThis.fetch` | Injectable HTTP implementation called with `globalThis` as receiver; defaults to the runtime's global implementation |
-| `timeout` | `30000` | Finite number greater than zero and at most `2147483647`; request deadline in milliseconds, implemented with `AbortController` |
+| `timeout` | `30000` | Positive `number` or `bigint`, at most `2147483647`; request deadline in milliseconds, implemented with `AbortController` |
 
 Argument types follow the declarations and are assumed correct at runtime.
 When supplied, `network`, `wallet`, `publicKey` and `language` must not be empty

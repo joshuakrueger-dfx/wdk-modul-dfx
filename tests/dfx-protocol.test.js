@@ -741,7 +741,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
   })
 
   describe('constructor', () => {
-    test.each([0, 0n, -1, NaN, Infinity, -Infinity])('rejects invalid timeout %#', TIMEOUT => {
+    test.each([0, 0n, -1, -1n, NaN, Infinity, -Infinity])('rejects invalid timeout %#', TIMEOUT => {
       failureSync(() => new DfxProtocol(undefined, { timeout: TIMEOUT }), ValueError, 'timeout must be a finite number greater than zero')
       expectInteractions([])
     })
@@ -1217,22 +1217,25 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       const SET_TIMEOUT = globalThis.setTimeout
       timerMock.mockImplementation((...args) => SET_TIMEOUT(...args))
       jest.spyOn(globalThis, 'setTimeout').mockImplementation(timerMock)
-      const { protocol } = setup({ timeout: TIMEOUT })
-      const result = await protocol.getSupportedCountries()
-      const [callback, delay] = timerMock.mock.calls[0]
+      const { protocol } = setup({ timeout: TIMEOUT }, {
+        'GET /v1/country': init => new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        })
+      })
+      const pending = protocol.getSupportedCountries()
+      // Handle rejection during timer advancement while preserving it for failure().
+      pending.catch(() => {})
       const signal = fetchMock.mock.calls[0][1].signal
-      const abortedBeforeCallback = signal.aborted
-      callback()
+      await jest.advanceTimersByTimeAsync(2147483646)
+      const abortedBeforeDeadline = signal.aborted
+      await jest.advanceTimersByTimeAsync(1)
+      await failure(pending, ProviderError, 'DFX request timed out', 'REQUEST_TIMEOUT')
 
-      expect(abortedBeforeCallback).toBe(false)
+      expect(abortedBeforeDeadline).toBe(false)
       expect(signal.aborted).toBe(true)
-      expect(delay).toBe(2147483647)
-
-      expect(result).toEqual([
-        { code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true },
-        { code: 'US', name: 'United States', isBuyAllowed: false, isSellAllowed: false }
-      ])
+      expect(timerMock.mock.calls[0][1]).toBe(2147483647)
       expect(timerMock).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
       expectRequests(fetchMock.mock.calls, [httpRequest('/v1/country')], true)
       expect(getAddressMock.mock.calls).toEqual([])
       expect(signMock.mock.calls).toEqual([])
@@ -1310,21 +1313,19 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
         signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
       }))
       const protocol = new DfxProtocol(undefined, { fetch, timeout: TIMEOUT })
-      const pending = protocol.getSupportedCountries().catch(error => error)
-      const [callback, delay] = timerMock.mock.calls[0]
+      const pending = protocol.getSupportedCountries()
+      // Handle rejection during timer advancement while preserving it for failure().
+      pending.catch(() => {})
       const signal = fetch.mock.calls[0][1].signal
-      const abortedBeforeCallback = signal.aborted
-      callback()
-      await jest.advanceTimersByTimeAsync(EXPECTED_DELAY)
-      const error = await pending
+      await jest.advanceTimersByTimeAsync(EXPECTED_DELAY - 1)
+      const abortedBeforeDeadline = signal.aborted
+      await jest.advanceTimersByTimeAsync(1)
+      await failure(pending, ProviderError, 'DFX request timed out', 'REQUEST_TIMEOUT')
 
-      expect(abortedBeforeCallback).toBe(false)
+      expect(abortedBeforeDeadline).toBe(false)
       expect(signal.aborted).toBe(true)
-      expect(delay).toBe(EXPECTED_DELAY)
+      expect(timerMock.mock.calls[0][1]).toBe(EXPECTED_DELAY)
       expect(timerMock).toHaveBeenCalledTimes(1)
-      expect(error.constructor).toBe(ProviderError)
-      expect(error.message).toBe('DFX request timed out')
-      expect(error.reason).toBe(ProviderErrorReason.REQUEST_TIMEOUT)
       expect(jest.getTimerCount()).toBe(0)
       expectRequests(fetch.mock.calls, [httpRequest('/v1/country')], true)
     })
