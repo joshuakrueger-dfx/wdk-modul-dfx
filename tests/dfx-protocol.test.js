@@ -1215,7 +1215,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     test('clears the request deadline after a response', async () => {
       jest.useFakeTimers()
       const { protocol } = setup({}, {
-        'GET /v1/country': response([{ symbol: 'CH', name: 'Switzerland', bankAllowed: true }])
+        'GET /v1/country': response([DUMMY_COUNTRIES[0]])
       })
 
       const result = await protocol.getSupportedCountries()

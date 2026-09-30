@@ -5,7 +5,8 @@ does not prove. Every result below was produced by running the named command. No
 unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
-  - **The last commit that changes this sentence (2026-09-30):** lint, unit, integration, coverage and mutation layers —
+  - **The last commit that changes this sentence (2026-09-30, after the fifth review pass):** lint, unit, integration,
+    coverage and mutation layers —
     the first four rows of the summary table. It includes these library changes made after `27dd624`: one shared
     transaction-detail session per instance, established by a single sign-in that concurrent `getTransactionDetail`
     calls share (first sign-in and renewal after HTTP 401); `buy`/`sell` sign in fresh and never touch that session; a
