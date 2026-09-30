@@ -1212,6 +1212,19 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     catalogCases('getSupportedCountries')
     arrayMessageCases('getSupportedCountries')
 
+    test('clears the request deadline after a response', async () => {
+      jest.useFakeTimers()
+      const { protocol } = setup({}, {
+        'GET /v1/country': response([{ symbol: 'CH', name: 'Switzerland', bankAllowed: true }])
+      })
+
+      const result = await protocol.getSupportedCountries()
+
+      expect(result).toEqual([{ code: 'CH', name: 'Switzerland', isBuyAllowed: true, isSellAllowed: true }])
+      expect(jest.getTimerCount()).toBe(0)
+      expectInteractions([httpRequest('/v1/country')])
+    })
+
     test.each([2147483647, 2147483647n])('accepts the maximum timer delay %s without clamping it', async TIMEOUT => {
       jest.useFakeTimers()
       const SET_TIMEOUT = globalThis.setTimeout

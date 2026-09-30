@@ -41,9 +41,9 @@ unless it says so.
 | Layer | Command | Result |
 | --- | --- | --- |
 | Integration, local | `npm run test:integration` | 45/45 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests | `npm run lint && npm test` | lint output empty; 706/706 tests in 1 suite |
-| Coverage (unit + integration) | `npm run test:coverage` | 751/751 tests in 2 suites; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 58/58 mutations detected across unit and integration suites, each by 1–233 tests |
+| Unit tests | `npm run lint && npm test` | lint output empty; 707/707 tests in 1 suite |
+| Coverage (unit + integration) | `npm run test:coverage` | 752/752 tests in 2 suites; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected across unit and integration suites, each by 1–233 tests |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
@@ -61,8 +61,8 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 
 ## 1. Unit tests
 
-`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 706 tests, all passing;
-`npm run test:coverage` adds the integration suite (751 tests together) and reaches 100 % coverage in all four categories. The
+`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 707 tests, all passing;
+`npm run test:coverage` adds the integration suite (752 tests together) and reaches 100 % coverage in all four categories. The
 session and signer-cache scenarios that build state across successive public calls live in the integration suite
 (skill rule R3). Parallel calls to the same method within one Act belong in unit tests. All
 unit tests use an injected `fetch` routed by method and URL and cover
@@ -73,7 +73,7 @@ recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 58 were detected. The fifth review pass added six: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision), and the request timer cleared right after it is set. The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. The cleared timer first survived as well: the rebuilt timer tests ran the timer callback by hand; they now reach the deadline through the fake clock and check that the request is still open one millisecond before it and aborted at it. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 59 were detected. The fifth review pass added seven: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision), the request timer cleared right after it is set, and the request timer left running after a response. The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. The cleared timer first survived as well: the rebuilt timer tests ran the timer callback by hand; they now reach the deadline through the fake clock and check that the request is still open one millisecond before it and aborted at it. A timer left running after a response also survived at first; a test now checks that no timer remains after a successful request. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
