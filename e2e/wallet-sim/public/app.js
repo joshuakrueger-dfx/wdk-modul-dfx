@@ -39,6 +39,7 @@ function userError (error) {
   if (/Unsupported buy asset/.test(message)) return 'Dieses Asset ist auf diesem Netz bei DFX nur verkaufbar.'
   if (/Unsupported sell asset/.test(message)) return 'Dieses Asset ist auf diesem Netz bei DFX nur kaufbar.'
   if (/Unsupported .*fiat|CurrencyUnsupported|IbanCurrencyMismatch/.test(message)) return 'Diese Währung ist für das gewählte Angebot nicht verfügbar. Bitte eine andere wählen.'
+  if (/smart accounts are not supported/i.test(message)) return 'Smart Accounts werden von DFX nicht unterstützt: DFX würde an die Owner-Adresse statt an dieses Konto auszahlen.'
   if (/UNAUTHORIZED/.test(String(error?.reason)) || /signature|authenticat|sign.in/i.test(message)) return 'Anmeldung bei DFX fehlgeschlagen. Bitte erneut versuchen.'
   if (/NETWORK_ERROR|REQUEST_TIMEOUT/.test(String(error?.reason))) return 'DFX ist gerade nicht erreichbar. Bitte gleich noch einmal versuchen.'
   if (/FORBIDDEN/.test(String(error?.reason))) return 'DFX ist für diese Anfrage derzeit nicht verfügbar.'

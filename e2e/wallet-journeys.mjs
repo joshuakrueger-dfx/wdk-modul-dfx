@@ -153,7 +153,7 @@ try {
           if (j.smart) {
             await waitForState(page, 'Smart-account rejection did not appear', () => {
               const offer = document.querySelector('#offer')
-              return offer?.classList.contains('error') && offer.textContent.includes('smart accounts are not supported because DFX would deliver to the signer')
+              return offer?.classList.contains('error') && offer.textContent.includes('Smart Accounts werden von DFX nicht unterstützt')
             })
             out.rejection = clean(await page.locator(tid('offer')).innerText())
             await shot('3-rejected')
