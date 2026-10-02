@@ -169,7 +169,7 @@ Runs all seven journeys, or one by name. Each journey gets a fresh server proces
 and wallet state, with a 600-second browser-page timeout (ten times the state timeout).
 The ERC-4337 journey expects checkout rejection, and the Bitcoin journey checks
 that BTC is not offered for selection; it fails if the catalog request fails or
-offers no selectable assets for the prepared wallet.
+offers no usable asset and fiat combination for the prepared wallet.
 On ordinary completion or failure, cleanup sends SIGTERM, then SIGKILL after
 5 seconds if needed. If the server still has not exited after another 5 seconds,
 the runner reports its PID and sets a nonzero exit code; the remaining journeys still run.
