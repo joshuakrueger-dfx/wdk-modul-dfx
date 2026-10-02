@@ -347,10 +347,13 @@ same fallback.
 - ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) are not supported.
   Their EIP-191 signature resolves to the signing owner rather than the smart
   account, so DFX would deliver purchases to the owner. More generally, any
-  recoverable signature resolving away from the account address—including a
-  signature over a foreign digest—is rejected after the account-address
-  challenge and first signature, before sign-in, with
+  on EVM constructor networks, any recoverable signature resolving away from the
+  account address—including a signature over a foreign digest—is rejected after
+  the account-address challenge and first signature, before sign-in, with
   `Account signature resolves to <signer>, not to the account <accountAddress>; smart accounts are not supported because DFX would deliver to the signer`.
+  Without a constructor `network`, `getTransactionDetail` authenticates with the
+  smart-account address; DFX rejects the owner signature with
+  `ProviderError(UNAUTHORIZED)`, and no payment path is opened.
   EOA accounts need one signature. Recovery is
   limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
   Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet

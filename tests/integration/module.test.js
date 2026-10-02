@@ -157,6 +157,8 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     const MESSAGE = challengeMessage(ADDRESS)
     const SIGNATURE = '0xf422b86a971338356e72f01f5e21456c8013321d5f6e23d08d344f2537bdc51f7a4ef5258e2684fdd5ec49c43a3576c2683bec8ab3d5e072484d53c9c1674aa41c'
     const OPTIONS = { ...PAIR, fiatAmount: 10000n }
+    const BUY_URL_2 = `https://dev.app.dfx.swiss/buy?session=${DUMMY_TOKEN}.2&lang=en&asset-in=CHF&asset-out=USDT&blockchain=Ethereum&amount-in=100`
+    const SELL_URL_2 = `https://dev.app.dfx.swiss/sell?session=${DUMMY_TOKEN}.2&lang=en&asset-in=USDT&asset-out=CHF&blockchain=Ethereum&amount-out=100`
     const EXPECTED_DETAIL = { cryptoAsset: 'USDT', fiatCurrency: 'CHF', status: 'completed' }
     const CHALLENGE = httpRequest(`/v1/auth/signMessage?address=${ADDRESS}`, 'GET', undefined, undefined, 'sandbox')
     const AUTH = httpRequest('/v1/auth', 'POST', JSON.stringify({ address: ADDRESS, signature: SIGNATURE, blockchain: 'Ethereum' }), undefined, 'sandbox')
@@ -293,15 +295,64 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     })
 
     test('a two-generations-old caller spends its only retry on the current expired token', async () => {
-      await resetServer({ expireDetails: 2, completedDetail: true })
-      const { protocol, tracked } = await trackedProtocol()
+      const detail3 = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.3`, 'sandbox')
+      const detail4 = httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.4`, 'sandbox')
+      await resetServer({ completedDetail: true })
+      const expectedRequests = [
+        CHALLENGE, AUTH, DETAIL, ...CATALOG, DETAIL,
+        DETAIL, CHALLENGE, AUTH, DETAIL_2, ...CATALOG,
+        DETAIL_2, CHALLENGE, AUTH, detail3, ...CATALOG,
+        detail3, CHALLENGE, AUTH, detail4, ...CATALOG
+      ]
+      const tracked = new DummySmartAccount(await freshAccount(), ADDRESS)
+      const requests = []
+      let rejectedToken
+      let hold = false
+      let signalHeld
+      let release
+      const held = new Promise(resolve => { signalHeld = resolve })
+      const released = new Promise(resolve => { release = resolve })
+      const protocol = new DfxProtocol(tracked, {
+        ...LOCAL_CONFIG,
+        fetch: async (url, init) => {
+          requests.push([url, init])
+          if (new URL(url).pathname === '/v1/transaction/detail/single' && init.headers.Authorization === rejectedToken) {
+            if (hold) {
+              hold = false
+              signalHeld()
+              await released
+            }
+            return response({ message: 'Expired detail session' }, 401)
+          }
+          return LOCAL_CONFIG.fetch(url, init)
+        }
+      })
 
-      const error = await protocol.getTransactionDetail(UID).catch(error => error)
+      const initial = await protocol.getTransactionDetail(UID)
+      rejectedToken = `Bearer ${DUMMY_TOKEN}`
+      hold = true
+      const late = protocol.getTransactionDetail(UID).catch(error => error)
+      await held
+      let second
+      let third
+      try {
+        second = await protocol.getTransactionDetail(UID)
+        rejectedToken = `Bearer ${DUMMY_TOKEN}.2`
+        third = await protocol.getTransactionDetail(UID)
+        rejectedToken = `Bearer ${DUMMY_TOKEN}.3`
+      } finally {
+        release()
+      }
+      const error = await late
       const next = await protocol.getTransactionDetail(UID)
 
-      await failure(Promise.reject(error), ProviderError, 'Unauthorized', 'UNAUTHORIZED')
+      expect(initial).toEqual(EXPECTED_DETAIL)
+      expect(second).toEqual(EXPECTED_DETAIL)
+      expect(third).toEqual(EXPECTED_DETAIL)
+      await failure(Promise.reject(error), ProviderError, 'Expired detail session', 'UNAUTHORIZED')
       expect(next).toEqual(EXPECTED_DETAIL)
-      expect(tracked.messages).toEqual([MESSAGE, MESSAGE, MESSAGE])
+      expect(tracked.messages).toEqual([MESSAGE, MESSAGE, MESSAGE, MESSAGE])
+      expectRequests(requests, expectedRequests)
     })
 
     test('authenticates again on the next lookup after the renewed token also receives HTTP 401', async () => {
@@ -325,81 +376,123 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     test('reuses the renewed token without another login after its detail request receives HTTP 500', async () => {
       await resetServer({ expireDetails: 1 })
       const unknown = '00000000-0000-4000-8000-000000000001'
-      const { protocol, tracked } = await trackedProtocol()
+      const failedPath = `/v1/transaction/detail/single?uid=${unknown}`
+      const { protocol, requests, tracked } = await trackedProtocol()
 
       const error = await protocol.getTransactionDetail(unknown).catch(error => error)
       const next = await protocol.getTransactionDetail(UID).catch(error => error)
 
-      await failure(Promise.reject(error), ProviderError, `Unrecorded DFX request: GET /v1/transaction/detail/single?uid=${unknown} body=null`, 'INTERNAL_SERVER_ERROR')
+      await failure(Promise.reject(error), ProviderError, `Unrecorded DFX request: GET ${failedPath} body=null`, 'INTERNAL_SERVER_ERROR')
       await failure(Promise.reject(next), NoSuchElementError, 'Transaction not found')
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
+      expectRequests(requests, [
+        CHALLENGE, AUTH, httpRequest(failedPath, 'GET', undefined, DUMMY_TOKEN, 'sandbox'),
+        CHALLENGE, AUTH, httpRequest(failedPath, 'GET', undefined, `${DUMMY_TOKEN}.2`, 'sandbox'),
+        httpRequest(`/v1/transaction/detail/single?uid=${UID}`, 'GET', undefined, `${DUMMY_TOKEN}.2`, 'sandbox')
+      ])
     })
 
     test('a failed buy login leaves the existing detail session intact', async () => {
       await resetServer({ completedDetail: true })
       let logins = 0
-      const { protocol, tracked } = await trackedProtocol({
-        fetch: (url, init) => {
-          if (new URL(url).pathname === '/v1/auth' && ++logins === 2) return response({ message: 'Widget login failed' }, 401)
-          return LOCAL_CONFIG.fetch(url, init)
+      const authResponses = []
+      const { protocol, requests, tracked } = await trackedProtocol({
+        fetch: async (url, init) => {
+          const auth = new URL(url).pathname === '/v1/auth'
+          const result = auth && ++logins === 2
+            ? response({ message: 'Widget login failed' }, 401)
+            : await LOCAL_CONFIG.fetch(url, init)
+          if (auth) {
+            const copy = typeof result.clone === 'function' ? result.clone() : result
+            authResponses.push({ status: result.status, body: JSON.parse(await copy.text()) })
+          }
+          return result
         }
       })
 
-      expect(await protocol.getTransactionDetail(UID)).toEqual(EXPECTED_DETAIL)
-      await failure(protocol.buy(OPTIONS), ProviderError, 'Widget login failed', 'UNAUTHORIZED')
-      expect(await protocol.getTransactionDetail(UID)).toEqual(EXPECTED_DETAIL)
+      const initial = await protocol.getTransactionDetail(UID)
+      const error = await protocol.buy(OPTIONS).catch(error => error)
+      const result = await protocol.getTransactionDetail(UID)
+
+      expect(initial).toEqual(EXPECTED_DETAIL)
+      await failure(Promise.reject(error), ProviderError, 'Widget login failed', 'UNAUTHORIZED')
+      expect(result).toEqual(EXPECTED_DETAIL)
+      expect(authResponses).toEqual([
+        { status: 201, body: { accessToken: DUMMY_TOKEN } },
+        { status: 401, body: { message: 'Widget login failed' } }
+      ])
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
+      expectRequests(requests, [
+        CHALLENGE, AUTH, DETAIL, ...CATALOG,
+        ...CATALOG, CHALLENGE, AUTH,
+        DETAIL, ...CATALOG
+      ])
+      expect(await serverControl('/__events')).toEqual([
+        `challenge:${ADDRESS}`, `login:${ADDRESS}`,
+        `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}`,
+        `challenge:${ADDRESS}`,
+        `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}`
+      ])
     })
 
     test.each([
-      ['buy', false],
-      ['sell', false],
-      ['buy', true]
-    ])('a fresh %s login with failure %s leaves the detail token unchanged', async (method, fail) => {
+      ['buy', false, { buyUrl: BUY_URL_2 }],
+      ['sell', false, { sellUrl: SELL_URL_2 }],
+      ['buy', true, undefined]
+    ])('a fresh %s login with failure %s leaves the detail token unchanged', async (method, fail, expectedWidget) => {
       await resetServer({ completedDetail: true })
+      const expectedRequests = [CHALLENGE, AUTH, DETAIL, ...CATALOG, ...CATALOG, CHALLENGE, AUTH, DETAIL, ...CATALOG]
       let logins = 0
-      const { protocol, tracked } = await trackedProtocol({
+      const { protocol, requests, tracked } = await trackedProtocol({
         fetch: (url, init) => {
           if (new URL(url).pathname === '/v1/auth' && ++logins === 2 && fail) return response({ message: 'Widget login failed' }, 401)
           return LOCAL_CONFIG.fetch(url, init)
         }
       })
 
-      expect(await protocol.getTransactionDetail(UID)).toEqual(EXPECTED_DETAIL)
+      const initial = await protocol.getTransactionDetail(UID)
       const widget = await protocol[method](OPTIONS).catch(error => error)
+      const cached = await protocol.getTransactionDetail(UID)
+
+      expect(initial).toEqual(EXPECTED_DETAIL)
       if (fail) await failure(Promise.reject(widget), ProviderError, 'Widget login failed', 'UNAUTHORIZED')
-      else expect(widget[`${method}Url`]).toContain(`session=${DUMMY_TOKEN}.2`)
-      expect(await protocol.getTransactionDetail(UID)).toEqual(EXPECTED_DETAIL)
+      else expect(widget).toEqual(expectedWidget)
+      expect(cached).toEqual(EXPECTED_DETAIL)
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
+      expectRequests(requests, expectedRequests)
     })
 
     test('EOA needs one signature for each fresh login', async () => {
-      const { protocol, tracked } = await trackedProtocol()
+      const { protocol, requests, tracked } = await trackedProtocol()
 
       await protocol.sell(OPTIONS)
-      await protocol.buy({ ...OPTIONS, recipient: ADDRESS })
+      const result = await protocol.buy({ ...OPTIONS, recipient: ADDRESS })
 
+      expect(result).toEqual({ buyUrl: BUY_URL_2 })
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
       expect(await serverControl('/__events')).toEqual([
         `challenge:${ADDRESS}`, `login:${ADDRESS}`, `challenge:${ADDRESS}`, `login:${ADDRESS}`
       ])
+      expectRequests(requests, [...CATALOG, CHALLENGE, AUTH, ...CATALOG, CHALLENGE, AUTH])
     })
 
     test.each([
-      ['buy', 'recipient'],
-      ['sell', 'refundAddress']
-    ])('%s opens a fresh session after transaction lookup', async (method, field) => {
-      const { protocol, tracked } = await trackedProtocol()
+      ['buy', 'recipient', { buyUrl: BUY_URL_2 }],
+      ['sell', 'refundAddress', { sellUrl: SELL_URL_2 }]
+    ])('%s opens a fresh session after transaction lookup', async (method, field, expectedResult) => {
+      const { protocol, requests, tracked } = await trackedProtocol()
 
       await protocol.getTransactionDetail(UID).catch(() => {})
-      await protocol[method]({ ...OPTIONS, [field]: ADDRESS })
+      const result = await protocol[method]({ ...OPTIONS, [field]: ADDRESS })
 
+      expect(result).toEqual(expectedResult)
       expect(tracked.messages).toEqual([MESSAGE, MESSAGE])
       expect(await serverControl('/__events')).toEqual([
         `challenge:${ADDRESS}`, `login:${ADDRESS}`,
         `detail:/v1/transaction/detail/single?uid=${UID}:Bearer ${DUMMY_TOKEN}`,
         `challenge:${ADDRESS}`, `login:${ADDRESS}`
       ])
+      expectRequests(requests, [CHALLENGE, AUTH, DETAIL, ...CATALOG, CHALLENGE, AUTH])
     })
 
     test.each([

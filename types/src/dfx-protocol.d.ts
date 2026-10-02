@@ -120,7 +120,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If the constructor network is missing.
      * @throws {ValueError} If the network differs from the account network.
      * @throws {ValueError} If recipient differs from the account address.
-     * @throws {ValueError} If the account signature resolves to an address other than the account address.
+     * @throws {ValueError} On EVM constructor networks, if the account signature resolves to an address other than the account address.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ProviderError} If authentication fails.
      * @throws {ProviderError} If the API request fails.
@@ -176,7 +176,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If the constructor network is missing.
      * @throws {ValueError} If the network differs from the account network.
      * @throws {ValueError} If refundAddress differs from the account address.
-     * @throws {ValueError} If the account signature resolves to an address other than the account address.
+     * @throws {ValueError} On EVM constructor networks, if the account signature resolves to an address other than the account address.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ProviderError} If authentication fails.
      * @throws {ProviderError} If the API request fails.
@@ -221,7 +221,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If the UID is empty or whitespace-only.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ValueError} If the identifier is rejected by DFX.
-     * @throws {ValueError} If the account signature resolves to an address other than the account address.
+     * @throws {ValueError} On EVM constructor networks, if the account signature resolves to an address other than the account address.
      * @throws {NoSuchElementError} If no transaction exists for the given id.
      * @throws {NoSuchElementError} If the transaction is a Swap.
      * @throws {NoSuchElementError} If the transaction is a Referral.

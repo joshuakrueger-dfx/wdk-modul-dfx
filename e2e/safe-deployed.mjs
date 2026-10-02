@@ -260,7 +260,7 @@ async function run () {
       let rejection
       try {
         await fiat[kind](kind === 'buy' ? buyOptions : {
-        cryptoAsset: 'USDT', fiatCurrency: 'EUR', cryptoAmount: 50n * 10n ** BigInt(asset.decimals)
+          cryptoAsset: 'USDT', fiatCurrency: 'EUR', cryptoAmount: 50n * 10n ** BigInt(asset.decimals)
         })
       } catch (error) { rejection = error }
       const expected = `account signature resolves to ${owner.toLowerCase()}, not to the account ${safe.toLowerCase()}; smart accounts are not supported because dfx would deliver to the signer`

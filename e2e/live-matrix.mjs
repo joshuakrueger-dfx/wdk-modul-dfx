@@ -93,6 +93,10 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
   await step(c.chain, 'getSupportedCountries (bank allowed)', async () => (await fiat.getSupportedCountries()).filter(x => x.isBuyAllowed).length)
 
   // Pick an asset on this network; prefer stablecoins.
+  if (assets === undefined) {
+    await step(c.chain, 'select listed asset', async () => { throw new Error('Asset catalog request failed') })
+    continue
+  }
   const codes = (assets ?? []).map(s => s.split('/')[0])
   const cur = fiats?.includes('EUR') ? 'EUR' : 'CHF'
   if (!codes.length && c.chain === 'bitcoin') {
@@ -113,7 +117,12 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
     continue
   }
   const code = ['USDT', 'USDC', 'EURC', 'ZCHF', 'ETH', 'POL', 'SOL', 'TRX', 'BTC', 'BNB'].find(x => codes.includes(x)) ?? codes[0]
-  const dec = Number((assets ?? []).find(s => s.startsWith(code + '/')).split('/')[1])
+  const selectedAsset = (assets ?? []).find(s => s.startsWith(code + '/'))
+  if (!selectedAsset) {
+    await step(c.chain, 'select listed asset', async () => { throw new Error('No listed asset with decimals') })
+    continue
+  }
+  const dec = Number(selectedAsset.split('/')[1])
   const cryptoAmount = 50n * 10n ** BigInt(dec) // 50 units
   log(`  -- pair ${code}/${cur}, crypto decimals ${dec}`)
 
