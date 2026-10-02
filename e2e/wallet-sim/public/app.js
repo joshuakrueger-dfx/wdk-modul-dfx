@@ -125,6 +125,7 @@ async function openTrade (direction) {
   state.pairs = []
   $('trade-title').textContent = direction === 'buy' ? 'Krypto kaufen' : 'Krypto verkaufen'
   $('asset-select').replaceChildren()
+  $('asset-select').dataset.catalog = 'loading'
   $('fiat-select').replaceChildren()
   $('amount').value = '100'
   $('amount-mode').value = 'fiat'
@@ -142,9 +143,10 @@ async function openTrade (direction) {
     state.pairs.forEach((pair, index) => $('asset-select').add(new Option(`${pair.asset.code} · ${pair.account.name}${pair.account.smartAccount && pair.account.chain === 'ethereum' ? ' (Smart)' : ''}`, String(index))))
     data.fiats.forEach(fiat => $('fiat-select').add(new Option(fiat.code, fiat.code)))
     if (data.fiats.some(fiat => fiat.code === 'EUR')) $('fiat-select').value = 'EUR'
-    if (!state.pairs.length || !data.fiats.length) { $('offer').textContent = 'Für deine Wallet sind derzeit keine Angebote verfügbar.'; return }
+    if (!state.pairs.length || !data.fiats.length) { $('asset-select').dataset.catalog = 'empty'; $('offer').textContent = 'Für deine Wallet sind derzeit keine Angebote verfügbar.'; return }
+    $('asset-select').dataset.catalog = 'loaded'
     scheduleQuote()
-  } catch (error) { if (revision === state.revision) errorBox($('offer'), error) } finally { refreshLog() }
+  } catch (error) { if (revision === state.revision) { $('asset-select').dataset.catalog = 'error'; errorBox($('offer'), error) } } finally { refreshLog() }
 }
 function scheduleQuote () {
   if (!state.pairs.length) return

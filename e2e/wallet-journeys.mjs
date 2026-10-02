@@ -116,12 +116,18 @@ try {
             return document.querySelector('#asset-select option') || (offer && offer !== 'Verfügbare Angebote werden geladen …')
           })
           const select = page.locator(tid('asset-select'))
+          await page.waitForFunction(selector => {
+            const element = document.querySelector(selector)
+            return element?.dataset.catalog && element.dataset.catalog !== 'loading'
+          }, tid('asset-select'))
           const options = await select.locator('option').allTextContents()
           const pick = options.find(o => j.asset.test(o))
           out.assetOptions = options.length
-          const offerHasError = await page.locator('#offer').evaluate(el => el.classList.contains('error'))
+          const catalog = await select.getAttribute('data-catalog')
           if (!pick && j.unlisted) {
-            if (offerHasError || options.length === 0) throw new Error('Asset catalog failed to load')
+            if (catalog === 'error') throw new Error('Asset catalog failed to load')
+            if (catalog === 'empty') throw new Error('Asset catalog offers no selectable assets for this wallet')
+            if (catalog !== 'loaded') throw new Error(`Unexpected asset catalog status: ${catalog}`)
             out.excluded = true
             await shot('2-excluded')
             out.pageErrors = errors.length
