@@ -144,9 +144,9 @@ permissions (no group or other access), e.g. `0600`. Reading rejects symlinks.
 ### Native-chain quotes
 
 Verifies that Bitcoin, Lightning and Arkade are unlisted in sandbox while their
-API rows omit `decimals`, and that both quote methods reject them with
+API rows carry `decimals: null`, and that both quote methods reject them with
 `ValueError`. Sandbox Firo remains listed with API `decimals: 8`; production
-currently omits decimals for all four:
+currently returns `decimals: null` for all four:
 
 ```sh
 node native-quotes.mjs > out/native-quotes-sandbox.log 2>&1
@@ -339,8 +339,8 @@ node kyc-widget.mjs > out/kyc-widget.log 2>&1
 
 `safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. It deploys the
 WDK smart account there without a bundler and signs before and after
-deployment. It then verifies that the module rejects `buy` and `sell` after one
-challenge and signature, without creating a DFX session. It needs `anvil` on `PATH`;
+deployment. It then verifies that the module rejects `buy` and `sell` with the
+smart-account `ValueError` and its exact message. It needs `anvil` on `PATH`;
 `ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
 and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
 are accepted. Set the variable in the process environment; the probe does not

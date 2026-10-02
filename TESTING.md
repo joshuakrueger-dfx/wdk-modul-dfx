@@ -456,6 +456,6 @@ sections 1–12 are historical results for the revisions named there. In the
 current code, a recoverable EVM signature whose signer differs from the account
 address is rejected after one challenge and one signature, before `POST /v1/auth`.
 Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
-catalog and rejected by trade methods while their API rows omit `decimals`;
+catalog and rejected by trade methods while their API rows carry `decimals: null`;
 sandbox Firo/FIRO remains listed with API `decimals: 8`. Production currently
 returns null for all four. An API value, including zero, remains authoritative.

@@ -1,5 +1,5 @@
 // Live DFX sandbox probe. Only wallet RPCs use the local Polygon fork.
-// Creates sandbox authentication sessions; does not submit buy/sell payments.
+// Expects buy/sell to be rejected for the smart account before DFX sign-in; submits no payments.
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
