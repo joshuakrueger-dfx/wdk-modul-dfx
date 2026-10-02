@@ -13,8 +13,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   provide dedicated network-only quote option types.
 - Optional wallet-assigned `externalTransactionId` for buy/sell widget URLs and
   transaction lookup via `getTransactionDetail(id, { idType: 'externalTransactionId' })`.
-- Order-tracking timing and sandbox account compatibility documentation, including
-  ERC-4337 owner delivery and native-asset decimal fallbacks.
+- Order-tracking timing and sandbox account compatibility documentation.
 - All eight WDK fiat methods for DFX production and sandbox environments.
 - Indicative buy and sell quotes with lossless response parsing and exact base units.
 - Authenticated widget URLs with account network binding and both amount modes.
@@ -27,6 +26,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   The coverage gate includes both unit and integration execution.
 
 ### Changed
+
+- Reject EVM smart accounts before DFX sign-in when their signature resolves to
+  an owner address, and validate delivery overrides against the account address
+  before signing.
+- Require API-provided crypto-asset decimals; assets without them are omitted
+  from supported lists and rejected by quote and trade methods.
+- Widen the `@tetherto/wdk-wallet` dependency range to `^1.0.0-beta.17` so it
+  includes the version pinned by `@tetherto/wdk-wallet-evm` and avoids duplicates.
 
 - Accept bigint HTTP timeouts, clarify API documentation and strengthen deadline callback tests.
 

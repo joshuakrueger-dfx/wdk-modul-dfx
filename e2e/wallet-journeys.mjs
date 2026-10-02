@@ -69,7 +69,7 @@ const JOURNEYS = [
   { name: 'eth-4337-buy-usdt', smart: true, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
   { name: 'tron-buy-usdt', smart: false, direction: 'buy', asset: /USDT.*tron/i, fiat: 'CHF', amount: '100' },
   { name: 'solana-sell-usdt', smart: false, direction: 'sell', asset: /USDT.*solana/i, fiat: 'EUR', amount: '50' },
-  { name: 'bitcoin-buy-btc', smart: false, direction: 'buy', asset: /BTC.*bitcoin/i, fiat: 'EUR', amount: '100' },
+  { name: 'bitcoin-buy-btc', smart: false, unlisted: true, direction: 'buy', asset: /BTC.*bitcoin/i, fiat: 'EUR', amount: '100' },
   { name: 'spark-sell-btc', smart: false, direction: 'sell', asset: /BTC.*spark/i, fiat: 'EUR', amount: '0.001', crypto: true },
   { name: 'eth-too-low', smart: false, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '1' }
 ]
@@ -119,6 +119,14 @@ try {
           const options = await select.locator('option').allTextContents()
           const pick = options.find(o => j.asset.test(o))
           out.assetOptions = options.length
+          if (!pick && j.unlisted) {
+            out.excluded = true
+            await shot('2-excluded')
+            out.pageErrors = errors.length
+            results.push(out)
+            console.log(JSON.stringify(out, null, 1))
+            continue
+          }
           if (!pick) throw new Error(`asset not offered: ${j.asset} in [${options.slice(0, 12).join(' | ')}]`)
           await select.selectOption({ label: pick })
           await page.locator(tid('fiat-select')).selectOption(j.fiat).catch(() => {})
@@ -134,6 +142,18 @@ try {
           const cont = page.locator(tid('continue-dfx'))
           if (await cont.isDisabled().catch(() => true)) { out.continue = 'disabled'; throw new Error('Continue to DFX is disabled') }
           await cont.click()
+          if (j.smart) {
+            await waitForState(page, 'Smart-account rejection did not appear', () => {
+              const offer = document.querySelector('#offer')
+              return offer?.classList.contains('error') && offer.textContent.includes('smart accounts are not supported because DFX would deliver to the signer')
+            })
+            out.rejection = clean(await page.locator(tid('offer')).innerText())
+            await shot('3-rejected')
+            out.pageErrors = errors.length
+            results.push(out)
+            console.log(JSON.stringify(out, null, 1))
+            continue
+          }
           await waitForState(page, 'DFX checkout frame did not open', () =>
             document.querySelector('#browser-sheet')?.hidden === false && document.querySelector('#browser-frame')?.getAttribute('src'))
           const frame = page.frameLocator(tid('browser-frame'))

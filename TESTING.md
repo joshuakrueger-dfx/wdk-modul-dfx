@@ -447,3 +447,14 @@ Production uses the same code; it was not tested there. The module cannot work a
 - **Drift between the recorded sandbox and the live API.** The integration fixtures are a snapshot of
   2026-09-28. Changes in DFX responses after that date show up in `e2e/live-matrix.mjs`, not in `npm run
   test:integration`; re-record with `node tests/integration/record.js`.
+
+## 13. Behaviour superseded on 2026-10-02
+
+The ERC-4337 owner authentication and native-decimals fallback described in
+sections 1–12 are historical results for the revisions named there. In the
+current code, a recoverable EVM signature whose signer differs from the account
+address is rejected after one challenge and one signature, before `POST /v1/auth`.
+Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
+catalog and rejected by trade methods while their API rows omit `decimals`;
+sandbox Firo/FIRO remains listed with API `decimals: 8`. Production currently
+returns null for all four. An API value, including zero, remains authoritative.

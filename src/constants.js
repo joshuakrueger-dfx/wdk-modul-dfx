@@ -175,16 +175,6 @@ export const FIAT_DECIMALS = Object.freeze({
   ZWG: 2
 })
 
-// Protocol constants: 1 BTC = 10⁸ sat, as used in DFX's own wallets;
-// FIRO likewise uses 10⁸ base units. API decimals always take precedence.
-// Match the decimal strings returned by parseNumbers for API numeric fields.
-export const NATIVE_DECIMALS = Object.freeze({
-  'Bitcoin/BTC': '8',
-  'Lightning/BTC': '8',
-  'Arkade/BTC': '8',
-  'Firo/FIRO': '8'
-})
-
 export const EVM_BLOCKCHAINS = new Set([
   'ethereum', 'sepolia', 'binancesmartchain', 'optimism', 'arbitrum', 'polygon',
   'base', 'haqq', 'gnosis', 'plasma', 'citrea', 'citreatestnet'

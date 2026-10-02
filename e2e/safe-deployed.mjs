@@ -256,39 +256,19 @@ async function run () {
     return { quoted: true, cryptoAmount: String(quote.cryptoAmount), fiatAmount: String(quote.fiatAmount) }
   })
   for (const kind of ['buy', 'sell']) {
-    // Session URLs stay in memory and never enter results or console output.
-    let session
-    await step(`${kind} with deployed Safe`, async () => {
-      const response = await fiat[kind](kind === 'buy' ? buyOptions : {
+    await step(`${kind} with deployed Safe is rejected`, async () => {
+      let rejection
+      try {
+        await fiat[kind](kind === 'buy' ? buyOptions : {
         cryptoAsset: 'USDT', fiatCurrency: 'EUR', cryptoAmount: 50n * 10n ** BigInt(asset.decimals)
-      })
-      const url = new URL(response[`${kind}Url`])
-      session = url.searchParams.get('session')
-      check(url.protocol === 'https:' && session, 'Missing HTTPS widget URL or session')
-      return { sessionPresent: true }
+        })
+      } catch (error) { rejection = error }
+      const expected = `account signature resolves to ${owner.toLowerCase()}, not to the account ${safe.toLowerCase()}; smart accounts are not supported because dfx would deliver to the signer`
+      check(rejection?.constructor?.name === 'ValueError', 'Deployed Safe did not raise ValueError')
+      check(rejection.message.toLowerCase() === expected, 'Unexpected smart-account rejection')
+      return { rejected: true, owner, safe }
     })
-    await step(`${kind} session: GET /v2/user is 200 and owner authenticated`, async () => {
-      const response = await fetch(`${API}/v2/user`, {
-        headers: { Authorization: `Bearer ${session}` },
-        signal: AbortSignal.any([stop.signal, AbortSignal.timeout(30000)])
-      })
-      check(response.status === 200, 'Sandbox /v2/user did not return 200')
-      const profile = await response.json()
-      const profileAddress = profile.activeAddress?.address
-      check(typeof profileAddress === 'string' && profileAddress.toLowerCase() === owner.toLowerCase(), 'Sandbox profile address is not signing owner')
-      const jwtAddress = JSON.parse(Buffer.from(session.split('.')[1], 'base64url').toString('utf8')).address
-      check(typeof jwtAddress === 'string' && jwtAddress.toLowerCase() === owner.toLowerCase(), 'Sandbox JWT address is not signing owner')
-      return { status: response.status, address: owner, profileAddress, jwtAddress }
-    })
-    session = undefined
   }
-  await step('Safe recipient rejected with ValueError and owner hint', async () => {
-    let rejection
-    try { await fiat.buy({ ...buyOptions, recipient: safe }) } catch (error) { rejection = error }
-    check(rejection?.constructor?.name === 'ValueError', 'Safe recipient did not raise ValueError')
-    check(/owner/i.test(rejection.message) && rejection.message.toLowerCase().includes(owner.toLowerCase()), 'ValueError lacks signing-owner address hint')
-    return { rejected: true, ownerHint: true }
-  })
 }
 
 try {

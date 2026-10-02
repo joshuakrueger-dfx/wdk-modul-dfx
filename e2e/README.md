@@ -63,7 +63,8 @@ account/payment information; treat output as local test data. Filenames are reus
 on subsequent runs, except for the full-stack screenshots with unique run IDs.
 
 These are the original exploratory probes, not a uniform assertion suite. The
-matrix records failed steps but exits zero; native quotes report `ERR` inline;
+matrix records failed steps but exits zero; native quotes exit nonzero on an
+unexpected listing or rejection;
 the differential prints mismatch counts. Inspect these probes' output, not just
 exit codes. The journey runner exits nonzero if a journey records a `stop` or
 page errors. In sandbox, `eth-too-low` is an ordinary flow because 1 EUR is
@@ -142,7 +143,10 @@ permissions (no group or other access), e.g. `0600`. Reading rejects symlinks.
 
 ### Native-chain quotes
 
-Lightning, Arkade and Firo, without wallet authentication:
+Verifies that Bitcoin, Lightning and Arkade are unlisted in sandbox while their
+API rows omit `decimals`, and that both quote methods reject them with
+`ValueError`. Sandbox Firo remains listed with API `decimals: 8`; production
+currently omits decimals for all four:
 
 ```sh
 node native-quotes.mjs > out/native-quotes-sandbox.log 2>&1
@@ -163,6 +167,8 @@ node signature-diff.mjs > out/signature-diff.log 2>&1
 
 Runs all seven journeys, or one by name. Each journey gets a fresh server process
 and wallet state, with a 600-second browser-page timeout (ten times the state timeout).
+The ERC-4337 journey expects checkout rejection, and the Bitcoin journey expects
+BTC to be absent while its API catalog row has no `decimals`.
 On ordinary completion or failure, cleanup sends SIGTERM, then SIGKILL after
 5 seconds if needed. If the server still has not exited after another 5 seconds,
 the runner reports its PID and sets a nonzero exit code; the remaining journeys still run.
@@ -212,7 +218,8 @@ production also refreshes every 30 seconds while the page is open. Failed or
 unavailable reads display “–”; Bitcoin and Spark have no configured public RPC
 and are not queried. Native balances follow the configured chain RPCs even in
 DFX sandbox mode. Smart-account balances belong to the displayed smart-account
-address, while DFX purchases use its owner address as noted in the simulator.
+address; authenticated DFX methods reject those accounts because owner-signature
+authentication would deliver to a different address.
 
 If `WALLET_SIM_ORDERS_FILE` is set, its parent directory must already exist.
 Orders are saved atomically with permissions `0600` and loaded at startup.
@@ -331,8 +338,8 @@ node kyc-widget.mjs > out/kyc-widget.log 2>&1
 
 `safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. It deploys the
 WDK smart account there without a bundler and signs before and after
-deployment. It then uses the deployed account through the module against the
-DFX **sandbox** (`buy`, `sell` and session checks). It needs `anvil` on `PATH`;
+deployment. It then verifies that the module rejects `buy` and `sell` after one
+challenge and signature, without creating a DFX session. It needs `anvil` on `PATH`;
 `ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
 and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
 are accepted. Set the variable in the process environment; the probe does not
