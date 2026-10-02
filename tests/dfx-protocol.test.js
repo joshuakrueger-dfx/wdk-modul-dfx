@@ -705,7 +705,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
     accountCases('buy')
     arrayMessageCases('buy')
 
-    test('rejects an ethers UTF-8 reference owner before authentication', async () => {
+    test('rejects an ethers UTF-8 reference owner after one challenge and signature, before DFX sign-in', async () => {
       // Independent ethers Wallet.signMessage vector, public private-key scalar 2.
       const DUMMY_ETHERS_SIGNATURE = '0x97ef3091c721f0afe35f3211adf256f2ce0231a7f7efebee90bce4ce43ffe0c84ca2dba2bb88d3e89b561d9b4c9d79a929e2d896cdbc65f5e1556dbd9ef20ae21c'
       const DUMMY_ETHERS_MESSAGE = 'By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address. Grüße ✓ 0xabc'
@@ -720,7 +720,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expectInteractions([...CATALOG_REQUESTS, CHALLENGE_REQUEST], [[DUMMY_ETHERS_MESSAGE]], [[]])
     })
 
-    test('rejects a signature over a foreign digest before authentication', async () => {
+    test('rejects a signature over a foreign digest after one challenge and signature, before DFX sign-in', async () => {
       // ECDSA fixture: nonce k=1 gives r=G.x and recovery bit 0. For key d=2,
       // signing z'=z-r gives s=z'+2r=z+r. Recovery against challenge digest z
       // therefore yields key 1, although the signature was made for another
@@ -1431,7 +1431,7 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       expectInteractions(EXPECTED_REQUESTS, [['[dev]_Sign this exact message']], [[]])
     })
 
-    test('transaction details reject a smart account before authentication', async () => {
+    test('transaction details reject a smart account after one challenge and signature, before DFX sign-in', async () => {
       const { protocol } = ownerSetup()
 
       await failure(protocol.getTransactionDetail('123'), ValueError,
