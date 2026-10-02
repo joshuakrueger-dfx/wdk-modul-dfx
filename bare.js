@@ -1,4 +1,4 @@
-// Copyright 2026 joshuakrueger-dfx &lt;joshua.krueger@dfx.swiss&gt;
+// Copyright 2026 DFX AG
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

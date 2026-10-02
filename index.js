@@ -1,4 +1,4 @@
-// Copyright 2026 joshuakrueger-dfx &lt;joshua.krueger@dfx.swiss&gt;
+// Copyright 2026 DFX AG
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,4 +32,26 @@
 /** @typedef {import('@tetherto/wdk-wallet/protocols').SupportedFiatCurrency} SupportedFiatCurrency */
 /** @typedef {import('@tetherto/wdk-wallet/protocols').SupportedCountry} SupportedCountry */
 
-export { default } from './src/dfx-protocol.js'
+export { default, default as DfxProtocol } from './src/dfx-protocol.js'
+export { IFiatProtocol, FiatProtocol, BuyErrorReason, SellErrorReason } from '@tetherto/wdk-wallet/protocols'
+export {
+  AccountRequiredError, ValueError, ProviderError, ProviderRequiredError,
+  BuyError, SellError, MaximumFeeExceededError, NoSuchElementError
+} from '@tetherto/wdk-wallet/protocols'
+export { ProviderErrorReason } from '@tetherto/wdk-wallet'
+
+/** @typedef {import('@tetherto/wdk-wallet').IWalletAccount} IWalletAccount */
+/** @typedef {import('@tetherto/wdk-wallet').IWalletAccountReadOnly} IWalletAccountReadOnly */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxProtocolConfig} DfxProtocolConfig */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxTradeConfig} DfxTradeConfig */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxBuyOptions} DfxBuyOptions */
+
+/** @typedef {import('./src/dfx-protocol.js').DfxSellOptions} DfxSellOptions */
+/** @typedef {import('./src/dfx-protocol.js').DfxTradeOptions} DfxTradeOptions */
+/** @typedef {import('./src/dfx-protocol.js').DfxQuoteConfig} DfxQuoteConfig */
+/** @typedef {import('./src/dfx-protocol.js').DfxQuoteOptions} DfxQuoteOptions */
+/** @typedef {import('./src/dfx-protocol.js').DfxBuyQuoteOptions} DfxBuyQuoteOptions */
+/** @typedef {import('./src/dfx-protocol.js').DfxSellQuoteOptions} DfxSellQuoteOptions */
