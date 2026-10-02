@@ -346,7 +346,7 @@ same fallback.
   and recognized formats; other signatures pass through unchanged.
 - ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) are not supported.
   Their EIP-191 signature resolves to the signing owner rather than the smart
-  account, so DFX would deliver purchases to the owner. More generally, any
+  account, so DFX would deliver purchases to the owner. More generally,
   on EVM constructor networks, any recoverable signature resolving away from the
   account address—including a signature over a foreign digest—is rejected after
   the account-address challenge and first signature, before sign-in, with

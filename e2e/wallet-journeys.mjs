@@ -119,7 +119,9 @@ try {
           const options = await select.locator('option').allTextContents()
           const pick = options.find(o => j.asset.test(o))
           out.assetOptions = options.length
+          const offerHasError = await page.locator('#offer').evaluate(el => el.classList.contains('error'))
           if (!pick && j.unlisted) {
+            if (offerHasError || options.length === 0) throw new Error('Asset catalog failed to load')
             out.excluded = true
             await shot('2-excluded')
             out.pageErrors = errors.length
