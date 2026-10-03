@@ -143,10 +143,10 @@ permissions (no group or other access), e.g. `0600`. Reading rejects symlinks.
 
 ### Native-chain quotes
 
-Verifies that Bitcoin, Lightning and Arkade are unlisted in sandbox while their
-API rows have no `decimals` value, and that both quote methods reject them with
-`ValueError`. Sandbox Firo remains listed with API `decimals: 8`; production
-currently returns `decimals: null` for all four:
+Verifies the listing of Bitcoin, Lightning, Arkade and Firo: in sandbox only
+Firo is expected to be listed, with `DFX_ENV=production` none of the four. For
+every unlisted asset, both quote methods must reject with `ValueError`
+`Missing decimals for <blockchain>/<asset>`:
 
 ```sh
 node native-quotes.mjs > out/native-quotes-sandbox.log 2>&1

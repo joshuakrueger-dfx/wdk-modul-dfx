@@ -18,6 +18,7 @@ const MESSAGE = 'DFX deployed Safe owner-signature probe v1'
 const results = []
 const stop = new AbortController()
 let child, childDone, childError, wdk, rpcUrl, account, fiat, safe, owner, signatureBefore
+const dfxRequests = []
 let rpcId = 0
 let anvilStderr = ''
 let anvilStderrTruncated = false
@@ -175,7 +176,14 @@ async function run () {
         chainId: 137, provider: rpcUrl, bundlerUrl: 'https://bundler.invalid',
         safeModulesVersion: '0.3.0', useNativeCoins: true
       })
-      .registerProtocol('polygon', 'dfx', DfxProtocol, { environment: 'sandbox', network: 'polygon' })
+      .registerProtocol('polygon', 'dfx', DfxProtocol, {
+        environment: 'sandbox',
+        network: 'polygon',
+        fetch: (url, init) => {
+          dfxRequests.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`)
+          return fetch(url, init)
+        }
+      })
     account = await wdk.getAccount('polygon', 0)
     safe = await account.getAddress()
     fiat = account.getFiatProtocol('dfx')
@@ -257,6 +265,7 @@ async function run () {
   })
   for (const kind of ['buy', 'sell']) {
     await step(`${kind} with deployed Safe is rejected`, async () => {
+      dfxRequests.length = 0
       let rejection
       try {
         await fiat[kind](kind === 'buy' ? buyOptions : {
@@ -266,7 +275,9 @@ async function run () {
       const expected = `account signature resolves to ${owner.toLowerCase()}, not to the account ${safe.toLowerCase()}; smart accounts are not supported because dfx would deliver to the signer`
       check(rejection?.constructor?.name === 'ValueError', 'Deployed Safe did not raise ValueError')
       check(rejection.message.toLowerCase() === expected, 'Unexpected smart-account rejection')
-      return { rejected: true, owner, safe }
+      check(dfxRequests.filter(request => request === 'GET /v1/auth/signMessage').length === 1, 'Expected exactly one DFX sign-in challenge')
+      check(!dfxRequests.includes('POST /v1/auth'), 'Smart account reached DFX sign-in')
+      return { rejected: true, owner, safe, dfxRequests: [...dfxRequests] }
     })
   }
 }

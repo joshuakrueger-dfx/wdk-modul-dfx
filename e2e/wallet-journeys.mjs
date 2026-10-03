@@ -124,6 +124,7 @@ try {
           const pick = options.find(o => j.asset.test(o))
           out.assetOptions = options.length
           const catalog = await select.getAttribute('data-catalog')
+          if (pick && j.unlisted) throw new Error(`Asset is unexpectedly offered: ${pick}`)
           if (!pick && j.unlisted) {
             if (catalog === 'error') throw new Error('Asset catalog failed to load')
             if (catalog === 'empty') throw new Error('Asset catalog offers no usable asset and fiat combination for this wallet')
