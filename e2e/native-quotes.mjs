@@ -1,4 +1,4 @@
-// Read-only: assets without API decimals stay unlisted and their quotes are rejected.
+// Read-only: checks per environment which of BTC/Bitcoin, Lightning, Arkade and FIRO are listed, and that both quote methods reject the unlisted ones with "Missing decimals".
 import DfxProtocol from '@dfx.swiss/wdk-protocol-fiat-dfx'
 
 const err = e => `${e?.constructor?.name} ${e?.reason ?? ''} ${e?.message}`.replace(/\s+/g, ' ')
