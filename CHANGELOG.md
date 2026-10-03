@@ -13,8 +13,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   provide dedicated network-only quote option types.
 - Optional wallet-assigned `externalTransactionId` for buy/sell widget URLs and
   transaction lookup via `getTransactionDetail(id, { idType: 'externalTransactionId' })`.
-- Order-tracking timing and sandbox account compatibility documentation, including
-  ERC-4337 owner delivery and native-asset decimal fallbacks.
+- Order-tracking timing and sandbox account compatibility documentation.
 - All eight WDK fiat methods for DFX production and sandbox environments.
 - Indicative buy and sell quotes with lossless response parsing and exact base units.
 - Authenticated widget URLs with account network binding and both amount modes.
@@ -28,24 +27,26 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Reject EVM smart accounts before DFX sign-in when their signature resolves to
+  an owner address, and validate delivery overrides against the account address
+  before signing.
+- Require API-provided crypto-asset decimals; assets without them are omitted
+  from supported lists and rejected by quote and trade methods.
+- Widen the `@tetherto/wdk-wallet` dependency range to `^1.0.0-beta.17` so it
+  includes the version pinned by `@tetherto/wdk-wallet-evm` and avoids duplicates.
+
 - Accept bigint HTTP timeouts, clarify API documentation and strengthen deadline callback tests.
 
-- Move stateful owner-cache and session scenarios to the local replay integration
+- Move stateful session scenarios to the local replay integration
   suite with real WDK EVM signatures, deterministic accounts and per-test resets.
   Compare complete catalogs with an independently supplied expectation fixture.
 - Clarify DFX option and account-error documentation, mirror it in the maintained
   declarations and use explicit unit-test expectations for decimals and encoding.
 
 - Follow C005 by trusting declared argument and account return types; retain value rules and external API response validation.
-- Cache recovered EVM signers only after successful authentication; reject
-  mismatched delivery addresses before signing or authentication requests only
-  for non-EVM accounts and cached EOA signers matching the account address.
-  Validate ERC-4337 delivery addresses after authentication so a stale owner
-  cache can be cleared by a rejected login and recovered on the next call.
 - Normalize null asset descriptions to undefined and align JSDoc with the
   manually maintained declarations and parent method descriptions.
-- Clarify ERC-4337 owner gas, address visibility, transaction-detail network
-  requirements and unsupported signing formats.
+- Clarify transaction-detail network requirements and unsupported signing formats.
 - Document heuristic payment matching, wallet waiting deadlines, unique IDs per
   widget opening and newest-transaction lookup within a reused widget session.
 - Record successful sandbox authentication with WDK EVM, Tron, Solana, Spark and
@@ -78,19 +79,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Fail lifecycle simulations when the backend has not reached the required payout
   boundary; validate prepared seed ownership and clarify owner-only file permissions.
 
-- Clear an account's cached EVM owner when its authentication
-  POST fails or returns an invalid access token; recover the signer on the next login
-  without an automatic retry. A failed widget login leaves the detail token intact.
+- A failed widget login leaves the detail token intact.
 - Treat empty asset descriptions like null, returning an undefined display name.
-- Authenticate EVM ERC-4337 accounts using the EIP-191 signing owner, as in DFX's
-  own wallet, with signature-only Noble recovery and an instance-local owner cache.
-  DFX delivers purchases to the owner EOA outside the smart account; recipient and
-  refund overrides must match that authentication address. Malformed signatures
-  retain backend validation. Sandbox verification on 2026-09-28 against `ec9b788`
-  includes the live matrix, deployed ERC-4337 (13/13) and native quotes; see TESTING.md.
-- Use 8 decimals for Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO only when
-  API decimals are null or absent, enabling their supported-list entries, quotes
-  and trades while preserving API precedence and exclusion of other missing-decimal assets.
 - Normalize recognized Solana hex signatures to Base58 and Spark DER-hex signatures
   to compact hex for authentication, without accessing keys or adding dependencies.
 - Restrict external transaction IDs to 1–256 ASCII letters, digits, dots,
@@ -121,6 +111,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Known limitations
 
-- Assets without API decimals or a native fallback, and ambiguous tickers without a network, are rejected.
+- Assets without API decimals, and ambiguous tickers without a network, are rejected.
+- EVM smart accounts (ERC-4337) are not supported: their signature resolves to the
+  signing owner, so DFX would deliver to the owner instead of the account.
 - Amounts outside the API's conservative numeric precision boundary are rejected.
 - Rate-limit and account-state error reasons are provisional pending WDK agreement.

@@ -39,6 +39,7 @@ function userError (error) {
   if (/Unsupported buy asset/.test(message)) return 'Dieses Asset ist auf diesem Netz bei DFX nur verkaufbar.'
   if (/Unsupported sell asset/.test(message)) return 'Dieses Asset ist auf diesem Netz bei DFX nur kaufbar.'
   if (/Unsupported .*fiat|CurrencyUnsupported|IbanCurrencyMismatch/.test(message)) return 'Diese Währung ist für das gewählte Angebot nicht verfügbar. Bitte eine andere wählen.'
+  if (/smart accounts are not supported/i.test(message)) return 'Smart Accounts werden von DFX nicht unterstützt: Die Signatur gehört zu einer anderen Adresse als dieses Konto, DFX würde dorthin auszahlen.'
   if (/UNAUTHORIZED/.test(String(error?.reason)) || /signature|authenticat|sign.in/i.test(message)) return 'Anmeldung bei DFX fehlgeschlagen. Bitte erneut versuchen.'
   if (/NETWORK_ERROR|REQUEST_TIMEOUT/.test(String(error?.reason))) return 'DFX ist gerade nicht erreichbar. Bitte gleich noch einmal versuchen.'
   if (/FORBIDDEN/.test(String(error?.reason))) return 'DFX ist für diese Anfrage derzeit nicht verfügbar.'
@@ -125,6 +126,7 @@ async function openTrade (direction) {
   state.pairs = []
   $('trade-title').textContent = direction === 'buy' ? 'Krypto kaufen' : 'Krypto verkaufen'
   $('asset-select').replaceChildren()
+  $('asset-select').dataset.catalog = 'loading'
   $('fiat-select').replaceChildren()
   $('amount').value = '100'
   $('amount-mode').value = 'fiat'
@@ -142,9 +144,10 @@ async function openTrade (direction) {
     state.pairs.forEach((pair, index) => $('asset-select').add(new Option(`${pair.asset.code} · ${pair.account.name}${pair.account.smartAccount && pair.account.chain === 'ethereum' ? ' (Smart)' : ''}`, String(index))))
     data.fiats.forEach(fiat => $('fiat-select').add(new Option(fiat.code, fiat.code)))
     if (data.fiats.some(fiat => fiat.code === 'EUR')) $('fiat-select').value = 'EUR'
-    if (!state.pairs.length || !data.fiats.length) { $('offer').textContent = 'Für deine Wallet sind derzeit keine Angebote verfügbar.'; return }
+    if (!state.pairs.length || !data.fiats.length) { $('asset-select').dataset.catalog = 'empty'; $('offer').textContent = 'Für deine Wallet sind derzeit keine Angebote verfügbar.'; return }
+    $('asset-select').dataset.catalog = 'loaded'
     scheduleQuote()
-  } catch (error) { if (revision === state.revision) errorBox($('offer'), error) } finally { refreshLog() }
+  } catch (error) { if (revision === state.revision) { $('asset-select').dataset.catalog = 'error'; errorBox($('offer'), error) } } finally { refreshLog() }
 }
 function scheduleQuote () {
   if (!state.pairs.length) return

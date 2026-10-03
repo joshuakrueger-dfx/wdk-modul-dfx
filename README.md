@@ -10,7 +10,7 @@ in the DFX widget; this module does not execute trades or hold funds.
 ## Compatibility
 
 Implements `IFiatProtocol` by extending `FiatProtocol` from
-`@tetherto/wdk-wallet`; tested against `1.0.0-beta.19`, with declared dependency range `^1.0.0-beta.19` (not a tested compatibility matrix).
+`@tetherto/wdk-wallet`; tested against `1.0.0-beta.17`, with declared dependency range `^1.0.0-beta.17` (not a tested compatibility matrix). Version `1.0.0-beta.15` does not load because `ProviderError` is missing from `@tetherto/wdk-wallet/protocols`.
 
 ES modules. Tested on Node.js 22.22.0 (CI) and Bare. The Bare entry point
 loads `bare-node-runtime/global`. HTTP uses `fetch` or an injected implementation.
@@ -155,12 +155,9 @@ Nonpositive response amounts cause `ProviderError(INTERNAL_SERVER_ERROR)`.
 validate inputs, resolve the pair for the direction, authenticate freshly and
 build the widget URL. A prior quote can surface limits before opening the widget;
 only confirmation in the widget is binding. `recipient` and `refundAddress`
-default to the authentication address: the signing owner EOA for ERC-4337,
-otherwise the account address. Explicit overrides must match that resolved address.
-For non-EVM networks and cached EVM signers matching the account address (EOAs),
-the check happens before authentication, without a signature or authentication
-request. For ERC-4337 accounts and uncached EVM signers, it happens after
-authentication, without an extra signing round for validation.
+default to the account address. Explicit overrides must match that address. The
+check happens before authentication, without a signature or authentication
+request for a mismatching override.
 If both addresses match `0x` followed by exactly
 40 hexadecimal digits, comparison ignores letter case to accept EVM checksum
 spelling. All other addresses must match exactly.
@@ -175,10 +172,11 @@ matches `USDT`). Quote bodies and widget URLs preserve the resolved DFX spelling
 blockchain value. This covers DFX networks with complete asset
 metadata, not only EVM chains.
 
-When API `decimals` is null or absent, Bitcoin/BTC, Lightning/BTC, Arkade/BTC and
-Firo/FIRO use 8 decimals and are available for quotes and trading. An API value
-always wins, including zero. Other assets without decimals remain excluded from
-supported lists and cannot be traded.
+Assets without API `decimals` are excluded from supported lists and cannot be
+quoted or traded. In the recorded sandbox catalog this includes Bitcoin/BTC,
+Lightning/BTC and Arkade/BTC; Firo/FIRO has API `decimals: 8`. The production
+API currently returns `decimals: null` for all four. An API value is authoritative,
+including zero.
 
 A ticker can occur on multiple networks. Without a network, ambiguous tickers
 throw `ValueError` listing the candidate networks. Lists include assets and
@@ -346,42 +344,32 @@ same fallback.
   session (`/v2/user` 200). Solana's 64-byte hex signature is converted to Base58,
   and Spark's DER-hex signature to compact hex, using only the constructor network
   and recognized formats; other signatures pass through unchanged.
-- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) are supported through
-  signing-owner authentication, as in DFX's own `dfx-wallet`.
-  **DFX delivers purchases to the owner EOA, not to the Safe/smart account. The
-  owner belongs to the same key, but purchased funds are outside the smart account.**
-  On ERC-4337 chains, the owner EOA typically has no gas and is usually not shown
-  in wallet apps. Purchased tokens remain under the owner's control, but cannot
-  be moved without gas. Integrators should display this address and plan for gas.
-  Explicit Safe `recipient` or `refundAddress` overrides throw `ValueError`.
-  `getTransactionDetail` also requires the constructor `network` for ERC-4337
-  accounts; without it, authentication uses the smart-account address and fails.
-  On the first EVM login, the module recovers the EIP-191 signer from the account's
-  signature; if it differs, it requests and signs a new challenge for the owner.
-  After successful authentication with a valid access token, the instance caches
-  the owner per account address, so later logins need one
-  signature. A failed authentication POST or invalid access token clears that
-  account's cached owner; the next login recovers the owner
-  again, without retrying the failed login. Widget sign-ins do not change an
-  existing detail session. EOA accounts need
-  only one signature from the start. Recovery is
+- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) are not supported.
+  Their EIP-191 signature resolves to the signing owner rather than the smart
+  account, so DFX would deliver purchases to the owner. More generally,
+  on EVM constructor networks, any recoverable signature resolving away from the
+  account address—including a signature over a foreign digest—is rejected after
+  the account-address challenge and first signature, before sign-in, with
+  `Account signature resolves to <signer>, not to the account <accountAddress>; smart accounts are not supported because DFX would deliver to the signer`.
+  Without a constructor `network`, `getTransactionDetail` authenticates with the
+  smart-account address; DFX rejects the owner signature with
+  `ProviderError(UNAUTHORIZED)`, and no payment path is opened.
+  EOA accounts need one signature. Recovery is
   limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
   Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet
   (case-insensitive). Accounts whose `sign` does not return an EIP-191 signature
   from the owner (for example, ERC-1271 formats) are unsupported. Unrecoverable
   formats are forwarded unchanged with the account address, which does not make
   them supported. Recoverable signatures over a different digest can resolve to
-  an unrelated address; failed authentication never caches that address.
-- Bitcoin authentication is sandbox-verified. Bitcoin/BTC, Lightning/BTC,
-  Arkade/BTC and Firo/FIRO are now tradable using an 8-decimal fallback when the
-  API omits `decimals` or supplies null, matching DFX wallets' BTC unit convention
-  (1 BTC = 10⁸ sat). API decimals take precedence; other missing-decimal assets
-  remain excluded. Sandbox runs on 2026-09-28 verified owner authentication and
-  native quotes against `ec9b788`; see [TESTING.md, section 11](TESTING.md#11-e2e-re-run-against-ec9b788-2026-09-28)
-  for results and their scope.
+  an unrelated address; such accounts are rejected with the recovered and account
+  addresses in the error message.
+- Bitcoin authentication is sandbox-verified. Bitcoin/BTC, Lightning/BTC and
+  Arkade/BTC remain excluded from the recorded sandbox catalog until the API
+  supplies `decimals`; sandbox Firo/FIRO supplies `8`. Production currently
+  returns `decimals: null` for all four.
 - Ambiguous tickers without a network are rejected.
 - HTTP 429 and account-state failures provisionally map to `INTERNAL_SERVER_ERROR`.
-- A `recipient` or `refundAddress` differing from the authentication address is rejected.
+- A `recipient` or `refundAddress` differing from the account address is rejected.
 - Request and widget amounts are limited to decimal values that `Number` carries
   without loss.
 - `networkCode` is `blockchain.toLowerCase()`; no chain aliases are translated.
@@ -418,8 +406,8 @@ For the integration project only, Jest starts a local HTTP server on a free
 loopback port and stops it in global teardown. Injected fetch redirects sandbox
 API URLs to that server; no external network or user environment variables are
 needed. Tests cover three catalogs, four quotes, authenticated widget URLs,
-unknown transaction IDs, rejection of invalid signatures, owner-cache isolation,
-early delivery-address rejection and session reuse and renewal.
+unknown transaction IDs, smart-account rejection, early delivery-address
+rejection and session reuse and renewal.
 
 ```sh
 npm run test:integration
