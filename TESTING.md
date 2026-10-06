@@ -16,6 +16,12 @@ unless it says so.
     itself (non-EVM or EOA); the HTTP timeout also accepts a `bigint` (fifth pass of the review skills, section 10).
     Integration expectations use address and signature literals computed independently with
     ethers for the public test phrase; no wallet call computes an expected value.
+  - **Current sign-in:** the account address is the DFX account. `recipient` and
+    `refundAddress` are checked before every sign-in. When the account implements
+    `signTypedData` and the constructor network has a known chain id, authentication
+    sends a Safe EIP-712 signature and does not submit the owner. Assets without API
+    decimals stay unlisted. The owner-cache drop and the delivery check limited to
+    non-EVM or EOA above describe the 2026-09-30 revision only.
   - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the remaining rows of the summary table
     (the only later library change is the `bigint` timeout above, plus documentation and named constants),
     re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
@@ -453,7 +459,8 @@ Production uses the same code; it was not tested there. The module cannot work a
 ## 13. Behaviour superseded on 2026-10-02
 
 The ERC-4337 owner authentication and native-decimals fallback described in
-sections 1–12 are historical results for the revisions named there. In the
+sections 1–12, plus the owner-cache drop and the delivery check limited to non-EVM
+or EOA in the 2026-09-30 preamble, are historical results for the revisions named there. In the
 current code, sign-in uses the account address. When the account can sign typed
 data and the constructor network has a DFX chain id, the module sends a Safe
 EIP-712 signature for that address. It does not sign in as the recovered owner.
