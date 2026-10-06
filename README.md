@@ -299,7 +299,7 @@ Only account errors whose `constructor` exactly equals a listed class pass throu
 Subclasses are not implicitly allowed. In particular, account-thrown `ValueError`
 and `NoSuchElementError` on transaction details are wrapped, so they cannot be
 misread as an invalid UID or missing order.
-Other failures thrown by `getAddress()` or `sign()` become
+Other failures thrown by `getAddress()`, `sign()` or `signTypedData()` become
 `ProviderError(UNAUTHORIZED)` with the original error as `cause`.
 
 | HTTP / failure | Mapping |
