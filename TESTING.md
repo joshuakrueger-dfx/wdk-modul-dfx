@@ -55,16 +55,16 @@ unless it says so.
 | Unit tests | `npm run lint && npm test` | lint output empty; 690/690 tests in 2 suites |
 | Coverage (unit + integration) | `npm run test:coverage` | 725/725 tests in 3 suites on Node 22.22.0; 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected on 2026-09-30, each by 1–233 tests; not repeated on this branch |
-| Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
+| Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures on `20ec94d`. The script on this branch was not re-run |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps on `20ec94d`; the 6 failures are expected (section 2). The script on this branch was not re-run |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps on `20ec94d`; the 4 failures are a DFX data issue (section 2). The script on this branch was not re-run |
-| Widget as the user sees it | `cd e2e && node widget-check.mjs` | the widget opens signed in, amount/asset/network prefilled, in sandbox and production |
+| Widget as the user sees it | `cd e2e && node widget-check.mjs` | On `20ec94d`, the widget opens signed in, amount/asset/network prefilled, in sandbox and production. The script on this branch was not re-run |
 | Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | Not re-run on this branch. The script expects Bitcoin to stay unlisted, the ERC-4337 journey to be rejected for an undeployed Safe before the checkout frame, and the other journeys to reach the DFX page title (`Buy`/`Sell`). The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
-| After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps (second run; the first stopped at a transient local `fetch failed`, section 12) |
+| After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps on `20ec94d` (second run; the first stopped at a transient local `fetch failed`, section 12). The script on this branch was not re-run |
 | Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Not re-run on this branch. The script expects sandbox to list only Firo, production to list none of Bitcoin, Lightning, Arkade and Firo, and unlisted assets to be rejected with Missing decimals |
-| Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
-| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules) |
-| KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
+| Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | On `20ec94d`, the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched. The script on this branch was not re-run |
+| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | On `20ec94d`: 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules). The script on this branch was not re-run |
+| KYC in the widget | `cd e2e && node kyc-widget.mjs` | On `20ec94d`: e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call. The script on this branch was not re-run |
 | Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | Not re-run on this branch. The script deploys the smart account on a Polygon fork and checks that its ERC-1271 check accepts the Safe signature; the sandbox does not see the fork |
 | Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; fifth pass of all skills on `498d4e6` (2026-09-30) |
 
@@ -275,8 +275,7 @@ Not run on this branch. What follows is what the script checks, not a measured r
 package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's personal
 signature over a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner.
 `buy()` and `sell()` submit the Safe address. The probe calls `isValidSignature` on the forked Safe and expects the
-ERC-1271 magic value. The sandbox API cannot see the fork, so it rejects that sign-in. A smart-account `recipient`
-that differs from the Safe is rejected before signing.
+ERC-1271 magic value. The sandbox API cannot see the fork, so it rejects that sign-in.
 
 ## 9. Real purchase with real money (production, 2026-09-28)
 
