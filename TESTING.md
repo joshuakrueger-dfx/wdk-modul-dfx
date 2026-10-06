@@ -6,8 +6,10 @@ re-run states what that script expects, not a measured result. Nothing is inferr
 unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
-  - **2026-09-30, after the fifth review pass:** the mutation-probe row of the summary. That row was not repeated
-    on this branch. The lint, unit, integration and coverage rows are the run recorded in section 1. That revision
+  - **This branch:** the lint, unit, integration and coverage rows, recorded in section 1. Lint, unit and integration
+    ran on Node v26.7.0. Coverage ran on Node 22.22.0.
+  - **2026-09-30, after the fifth review pass:** the mutation-probe row of the summary only. That row was not repeated
+    on this branch. That revision
     includes these library changes made after `27dd624`: one shared
     transaction-detail session per instance, established by a single sign-in that concurrent `getTransactionDetail`
     calls share (first sign-in and renewal after HTTP 401); `buy`/`sell` sign in fresh and never touch that session; a
@@ -32,7 +34,7 @@ unless it says so.
     (section 12).
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
-- **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
+- **Runtime:** Historical runs used Node.js `v22.22.0`. On this branch, lint, unit and integration used Node v26.7.0, and coverage used Node 22.22.0. macOS arm64; Bare for the Bare entry point.
 - **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.17
   (a single copy, also used by `@tetherto/wdk-wallet-evm`; 1.0.0-beta.19 before 2026-10-02)
   and `@tetherto/wdk-wallet-evm` 1.0.0-beta.19.
@@ -84,7 +86,7 @@ There is no cached signing owner.
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 59 were detected. The fifth review pass added seven: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision), the request timer cleared right after it is set, and the request timer left running after a response. The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. The cleared timer first survived as well: the rebuilt timer tests ran the timer callback by hand; they now reach the deadline through the fake clock and check that the request is still open one millisecond before it and aborted at it. A timer left running after a response also survived at first; a test now checks that no timer remains after a successful request. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 59 were detected on 2026-09-30 and were not repeated on this branch. The fifth review pass added seven: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision), the request timer cleared right after it is set, and the request timer left running after a response. The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. The cleared timer first survived as well: the rebuilt timer tests ran the timer callback by hand; they now reach the deadline through the fake clock and check that the request is still open one millisecond before it and aborted at it. A timer left running after a response also survived at first; a test now checks that no timer remains after a successful request. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -105,13 +107,13 @@ The probe script is a local tool and is not part of this repository.
 
 `e2e/live-matrix.mjs` builds a real WDK instance from a fresh random seed for each run, registers each wallet package
 and this module with `registerProtocol`, and calls the module through `account.getFiatProtocol('dfx')`, exactly as an
-integrating wallet does. Per chain it checks: registration; the three catalogues; `quoteBuy` and `quoteSell`;
+integrating wallet does. On the `20ec94d` run, per chain it checked: registration; the three catalogues; `quoteBuy` and `quoteSell`;
 sign-in (via `getTransactionDetail` on an unknown ID, expecting `NoSuchElementError` after a successful sign-in);
 `buy()` and `sell()` URLs; that the session in each URL is valid (`GET /v2/user` returns 200); rejection of a foreign
 `recipient`; rejection of a read-only account; `externalTransactionId` in the URL; and `getTransactionDetail` by
 external ID before any payment.
 
-Chains: Ethereum, Polygon, Arbitrum, Base, Optimism, BNB Smart Chain and Sepolia (`wdk-wallet-evm`); Polygon as an
+Chains in that run: Ethereum, Polygon, Arbitrum, Base, Optimism, BNB Smart Chain and Sepolia (`wdk-wallet-evm`); Polygon as an
 ERC-4337 smart account; Tron; Solana; Bitcoin (BIP-84); Spark.
 
 **Current script, not run live.** An undeployed ERC-4337 account (`smart: true`) is expected to stay unsigned-in:
@@ -269,7 +271,7 @@ app behaviour.
 
 ## 8. Deployed ERC-4337 account
 
-`safe-deployed.mjs` forks Polygon with `anvil`. It deploys the WDK smart account there without a bundler, using the
+Not run on this branch. What follows is what the script checks, not a measured result of this branch. `safe-deployed.mjs` forks Polygon with `anvil`. It deploys the WDK smart account there without a bundler, using the
 package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's personal
 signature over a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner.
 `buy()` and `sell()` submit the Safe address. The probe calls `isValidSignature` on the forked Safe and expects the
@@ -342,7 +344,7 @@ requested two signatures each. Since the shared-session change, parallel `getTra
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
 - Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (35/35 on this branch, see section
-  11 and the summary) against a local DFX server started
+  1 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.
   Expected values are fixed literals computed independently from the recorded responses. Checks: 12/12 with all
@@ -476,5 +478,5 @@ data and the constructor network has a DFX chain id, the module sends a Safe
 EIP-712 signature for that address. It does not sign in as the recovered owner.
 Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
 catalog and rejected by trade methods while their API rows carry `decimals: null`;
-sandbox Firo/FIRO remains listed with API `decimals: 8`. Production currently
-returns null for all four. An API value, including zero, remains authoritative.
+sandbox Firo/FIRO remains listed with API `decimals: 8`. In the last recorded production catalog, production
+returned null for all four. Production was not fetched again on this branch. An API value, including zero, remains authoritative.
