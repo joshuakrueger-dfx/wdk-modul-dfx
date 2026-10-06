@@ -104,8 +104,8 @@ preference to the constructor network. For widget URLs it must equal the
 constructor network case-insensitively; the caller is responsible for binding the actual account to
 that network. Authentication forwards its matching PascalCase DFX blockchain
 enum value; an unknown network has no `blockchain` auth field. The module never
-reads account key material. `getAddress()` and `sign(message)` are the account
-operations used.
+reads account key material. `getAddress()`, `sign(message)` and, for a differing
+EVM signer on a known chain id, `signTypedData` are the account operations used.
 
 ## Methods and units
 

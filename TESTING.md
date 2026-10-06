@@ -50,9 +50,9 @@ unless it says so.
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
 | Widget as the user sees it | `cd e2e && node widget-check.mjs` | the widget opens signed in, amount/asset/network prefilled, in sandbox and production |
-| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 7/7 journeys reach the DFX page title (`Buy`/`Sell`), 0 page errors, exit 0 (latest run, section 12); the Solana journey fails whenever its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
+| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | Bitcoin stays unlisted; the ERC-4337 journey expects DFX to reject an undeployed Safe before the checkout frame; the other journeys reach the DFX page title (`Buy`/`Sell`). The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
 | After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps (second run; the first stopped at a transient local `fetch failed`, section 12) |
-| Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Lightning, Arkade, Firo listed and quoted in sandbox and production |
+| Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | sandbox lists only Firo; production lists none of Bitcoin, Lightning, Arkade and Firo; unlisted assets are rejected with Missing decimals |
 | Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
 | Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules) |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |

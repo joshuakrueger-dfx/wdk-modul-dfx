@@ -219,8 +219,9 @@ production also refreshes every 30 seconds while the page is open. Failed or
 unavailable reads display “–”; Bitcoin and Spark have no configured public RPC
 and are not queried. Native balances follow the configured chain RPCs even in
 DFX sandbox mode. Smart-account balances belong to the displayed smart-account
-address; authenticated DFX methods reject those accounts because owner-signature
-authentication would deliver to a different address.
+address. Authenticated DFX methods sign in as that address. On a known chain id
+the module sends a Safe EIP-712 signature when the account implements
+`signTypedData`. DFX rejects an undeployed account that has no code.
 
 If `WALLET_SIM_ORDERS_FILE` is set, its parent directory must already exist.
 Orders are saved atomically with permissions `0600` and loaded at startup.
