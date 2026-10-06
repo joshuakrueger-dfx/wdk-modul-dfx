@@ -167,7 +167,7 @@ node signature-diff.mjs > out/signature-diff.log 2>&1
 
 Runs all seven journeys, or one by name. Each journey gets a fresh server process
 and wallet state, with a 600-second browser-page timeout (ten times the state timeout).
-The ERC-4337 journey expects checkout rejection, and the Bitcoin journey checks
+The ERC-4337 journey expects DFX to reject an undeployed Safe, and the Bitcoin journey checks
 that BTC is not offered for selection; it fails if the catalog request fails or
 offers no usable asset and fiat combination for the prepared wallet.
 On ordinary completion or failure, cleanup sends SIGTERM, then SIGKILL after
@@ -339,8 +339,9 @@ node kyc-widget.mjs > out/kyc-widget.log 2>&1
 
 `safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. It deploys the
 WDK smart account there without a bundler and signs before and after
-deployment. It then verifies that the module rejects `buy` and `sell` with the
-smart-account `ValueError` and its message (compared case-insensitively). It needs `anvil` on `PATH`;
+deployment. It then checks that `buy` and `sell` submit the Safe address and that
+the forked contract accepts that signature via ERC-1271. The sandbox rejects the
+sign-in because it does not see the fork. It needs `anvil` on `PATH`;
 `ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
 and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
 are accepted. Set the variable in the process environment; the probe does not

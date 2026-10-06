@@ -27,9 +27,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
-- Reject EVM smart accounts before DFX sign-in when their signature resolves to
-  an owner address, and validate delivery overrides against the account address
-  before signing.
+- Sign EVM smart accounts in as the account address. When `signTypedData` is
+  available and the constructor network has a DFX chain id, authentication sends
+  a Safe EIP-712 signature instead of the owner recovery. Delivery overrides
+  must still match the account address before signing.
 - Require API-provided crypto-asset decimals; assets without them are omitted
   from supported lists and rejected by quote and trade methods.
 - Widen the `@tetherto/wdk-wallet` dependency range to `^1.0.0-beta.17` so it
@@ -112,7 +113,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Known limitations
 
 - Assets without API decimals, and ambiguous tickers without a network, are rejected.
-- EVM smart accounts (ERC-4337) are not supported: their signature resolves to the
-  signing owner, so DFX would deliver to the owner instead of the account.
+- A smart account can sign in only after its contract is deployed on the chain
+  DFX queries, and only when one owner signature meets the contract threshold.
+  Haqq and Plasma are forwarded without a Safe signature because DFX publishes
+  no chain id for them.
 - Amounts outside the API's conservative numeric precision boundary are rejected.
 - Rate-limit and account-state error reasons are provisional pending WDK agreement.

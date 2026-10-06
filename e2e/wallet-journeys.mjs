@@ -152,9 +152,9 @@ try {
           if (await cont.isDisabled().catch(() => true)) { out.continue = 'disabled'; throw new Error('Continue to DFX is disabled') }
           await cont.click()
           if (j.smart) {
-            await waitForState(page, 'Smart-account rejection did not appear', () => {
+            await waitForState(page, 'Undeployed smart-account sign-in error did not appear', () => {
               const offer = document.querySelector('#offer')
-              return offer?.classList.contains('error') && offer.textContent.includes('Smart Accounts werden von DFX nicht unterstützt')
+              return offer?.classList.contains('error') && offer.textContent.includes('Anmeldung bei DFX fehlgeschlagen')
             })
             out.rejection = clean(await page.locator(tid('offer')).innerText())
             await shot('3-rejected')

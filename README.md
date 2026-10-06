@@ -344,25 +344,20 @@ same fallback.
   session (`/v2/user` 200). Solana's 64-byte hex signature is converted to Base58,
   and Spark's DER-hex signature to compact hex, using only the constructor network
   and recognized formats; other signatures pass through unchanged.
-- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) are not supported.
-  Their EIP-191 signature resolves to the signing owner rather than the smart
-  account, so DFX would deliver purchases to the owner. More generally,
-  on EVM constructor networks, any recoverable signature resolving away from the
-  account address—including a signature over a foreign digest—is rejected after
-  the account-address challenge and first signature, before sign-in, with
-  `Account signature resolves to <signer>, not to the account <accountAddress>; smart accounts are not supported because DFX would deliver to the signer`.
-  Without a constructor `network`, `getTransactionDetail` authenticates with the
-  smart-account address; DFX rejects the owner signature with
-  `ProviderError(UNAUTHORIZED)`, and no payment path is opened.
-  EOA accounts need one signature. Recovery is
-  limited to the constructor networks Ethereum, Sepolia, BinanceSmartChain,
-  Optimism, Arbitrum, Polygon, Base, Haqq, Gnosis, Plasma, Citrea and CitreaTestnet
-  (case-insensitive). Accounts whose `sign` does not return an EIP-191 signature
-  from the owner (for example, ERC-1271 formats) are unsupported. Unrecoverable
-  formats are forwarded unchanged with the account address, which does not make
-  them supported. Recoverable signatures over a different digest can resolve to
-  an unrelated address; such accounts are rejected with the recovered and account
-  addresses in the error message.
+- ERC-4337 accounts (`@tetherto/wdk-wallet-evm-erc-4337`) sign in as the address
+  returned by `getAddress()`. That address is the DFX account, the recipient and
+  the refund address. The module never submits the recovered owner. On Ethereum,
+  Sepolia, BinanceSmartChain, Optimism, Arbitrum, Polygon, Base, Gnosis, Citrea
+  and CitreaTestnet, a personal signature that recovers to a different address is
+  replaced with a Safe EIP-712 `SafeMessage` when the account implements
+  `signTypedData`. DFX checks it with ERC-1271. The check succeeds only after the
+  contract is deployed and one owner signature meets its threshold. A
+  counterfactual account with no code is rejected by DFX. Haqq and Plasma have no
+  chain id in that configuration, so the wallet signature is forwarded and DFX
+  decides. Accounts without `signTypedData` keep the wallet signature on the
+  account address. Without a constructor `network`, no Safe signature is built.
+  EOA accounts still need one signature. Unrecoverable signatures are forwarded
+  unchanged with the account address.
 - Bitcoin authentication is sandbox-verified. Bitcoin/BTC, Lightning/BTC and
   Arkade/BTC remain excluded from the recorded sandbox catalog until the API
   supplies `decimals`; sandbox Firo/FIRO supplies `8`. Production currently
@@ -406,7 +401,7 @@ For the integration project only, Jest starts a local HTTP server on a free
 loopback port and stops it in global teardown. Injected fetch redirects sandbox
 API URLs to that server; no external network or user environment variables are
 needed. Tests cover three catalogs, four quotes, authenticated widget URLs,
-unknown transaction IDs, smart-account rejection, early delivery-address
+unknown transaction IDs, smart-account sign-in, early delivery-address
 rejection and session reuse and renewal.
 
 ```sh

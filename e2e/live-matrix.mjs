@@ -135,12 +135,12 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
       ['sell', { cryptoAsset: code, fiatCurrency: cur, cryptoAmount }],
       ['getTransactionDetail', 'E2E-NONEXISTENT-UID']
     ]) {
-      await step(c.chain, `${method} -> smart-account ValueError`, async () => {
+      await step(c.chain, `${method} -> undeployed smart account stays unsigned-in`, async () => {
         try { await fiat[method](input) } catch (e) {
-          if (e?.constructor?.name === 'ValueError' && e.message.startsWith('Account signature resolves to ') && e.message.endsWith('; smart accounts are not supported because DFX would deliver to the signer')) return err(e)
+          if (e?.constructor?.name === 'ProviderError' && e.reason === 'UNAUTHORIZED') return err(e)
           throw e
         }
-        throw new Error('Smart account was not rejected')
+        throw new Error('Undeployed smart account signed in')
       })
     }
     continue

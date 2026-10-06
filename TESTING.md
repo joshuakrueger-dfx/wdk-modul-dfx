@@ -56,7 +56,7 @@ unless it says so.
 | Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
 | Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules) |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
-| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
+| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | deploys the smart account on a Polygon fork and checks that its ERC-1271 check accepts the Safe signature; the sandbox does not see the fork |
 | Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; fifth pass of all skills on `498d4e6` (2026-09-30) |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
@@ -254,10 +254,11 @@ app behaviour.
 ## 8. Deployed ERC-4337 account
 
 `safe-deployed.mjs` forks Polygon with `anvil`. It deploys the WDK smart account there without a bundler, using the
-package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's signature over
-a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner. Against the DFX
-sandbox, `quoteBuy`, `buy()` and `sell()` work with the deployed account, and both sessions belong to the owner address
-(`activeAddress` in `/v2/user` and the JWT `address` claim). A smart-account `recipient` is rejected. 13/13 steps.
+package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's personal
+signature over a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner.
+`buy()` and `sell()` submit the Safe address. The probe calls `isValidSignature` on the forked Safe and expects the
+ERC-1271 magic value. The sandbox API cannot see the fork, so it rejects that sign-in. A smart-account `recipient`
+that differs from the Safe is rejected before signing.
 
 ## 9. Real purchase with real money (production, 2026-09-28)
 
@@ -453,8 +454,9 @@ Production uses the same code; it was not tested there. The module cannot work a
 
 The ERC-4337 owner authentication and native-decimals fallback described in
 sections 1–12 are historical results for the revisions named there. In the
-current code, a recoverable EVM signature whose signer differs from the account
-address is rejected after one challenge and one signature, before `POST /v1/auth`.
+current code, sign-in uses the account address. When the account can sign typed
+data and the constructor network has a DFX chain id, the module sends a Safe
+EIP-712 signature for that address. It does not sign in as the recovered owner.
 Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
 catalog and rejected by trade methods while their API rows carry `decimals: null`;
 sandbox Firo/FIRO remains listed with API `decimals: 8`. Production currently

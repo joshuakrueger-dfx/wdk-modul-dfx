@@ -1,11 +1,11 @@
 // Live DFX sandbox probe. Only wallet RPCs use the local Polygon fork.
-// Expects buy/sell to be rejected for the smart account before DFX sign-in; submits no payments.
+// buy/sell submit the Safe address. The fork proves ERC-1271; the sandbox cannot see it.
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import { verifyMessage } from 'ethers'
+import { hashMessage, Interface, verifyMessage } from 'ethers'
 import WDK from '@tetherto/wdk'
 import WalletManagerEvmErc4337 from '@tetherto/wdk-wallet-evm-erc-4337'
 import DfxProtocol from '@dfx.swiss/wdk-protocol-fiat-dfx'
@@ -19,6 +19,8 @@ const results = []
 const stop = new AbortController()
 let child, childDone, childError, wdk, rpcUrl, account, fiat, safe, owner, signatureBefore
 const dfxRequests = []
+const authBodies = []
+let challengeMessage
 let rpcId = 0
 let anvilStderr = ''
 let anvilStderrTruncated = false
@@ -179,9 +181,13 @@ async function run () {
       .registerProtocol('polygon', 'dfx', DfxProtocol, {
         environment: 'sandbox',
         network: 'polygon',
-        fetch: (url, init) => {
-          dfxRequests.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`)
-          return fetch(url, init)
+        fetch: async (url, init) => {
+          const path = new URL(url).pathname
+          dfxRequests.push(`${init?.method ?? 'GET'} ${path}`)
+          if (path === '/v1/auth' && init?.method === 'POST') authBodies.push(init.body)
+          const response = await fetch(url, init)
+          if (path === '/v1/auth/signMessage') challengeMessage = JSON.parse(await response.clone().text()).message
+          return response
         }
       })
     account = await wdk.getAccount('polygon', 0)
@@ -263,21 +269,40 @@ async function run () {
     check(quote.fiatAmount === buyOptions.fiatAmount, 'quoteBuy changed requested fiat amount')
     return { quoted: true, cryptoAmount: String(quote.cryptoAmount), fiatAmount: String(quote.fiatAmount) }
   })
+  const erc1271 = new Interface(['function isValidSignature(bytes32,bytes) view returns (bytes4)'])
   for (const kind of ['buy', 'sell']) {
-    await step(`${kind} with deployed Safe is rejected`, async () => {
+    await step(`${kind} submits the Safe and the fork accepts the signature`, async () => {
       dfxRequests.length = 0
+      authBodies.length = 0
+      challengeMessage = undefined
       let rejection
       try {
         await fiat[kind](kind === 'buy' ? buyOptions : {
           cryptoAsset: 'USDT', fiatCurrency: 'EUR', cryptoAmount: 50n * 10n ** BigInt(asset.decimals)
         })
       } catch (error) { rejection = error }
-      const expected = `account signature resolves to ${owner.toLowerCase()}, not to the account ${safe.toLowerCase()}; smart accounts are not supported because dfx would deliver to the signer`
-      check(rejection?.constructor?.name === 'ValueError', 'Deployed Safe did not raise ValueError')
-      check(rejection.message.toLowerCase() === expected, 'Unexpected smart-account rejection')
+      check(rejection?.constructor?.name === 'ProviderError', 'Sandbox did not reject the anvil-only Safe')
+      check(rejection.reason === 'UNAUTHORIZED', 'Sandbox rejection was not an authentication failure')
       check(dfxRequests.filter(request => request === 'GET /v1/auth/signMessage').length === 1, 'Expected exactly one DFX sign-in challenge')
-      check(!dfxRequests.includes('POST /v1/auth'), 'Smart account reached DFX sign-in')
-      return { rejected: true, owner, safe, dfxRequests: [...dfxRequests] }
+      check(authBodies.length === 1, 'Expected one DFX sign-in')
+      const body = JSON.parse(authBodies[0])
+      check(body.address.toLowerCase() === safe.toLowerCase(), 'Sign-in address is not the Safe')
+      check(body.address.toLowerCase() !== owner.toLowerCase(), 'Sign-in address is the owner')
+      check(body.blockchain === 'Polygon', 'Sign-in blockchain is not Polygon')
+      check(typeof challengeMessage === 'string' && challengeMessage.length > 0, 'Missing DFX challenge')
+      const signer = verifyMessage(challengeMessage, await account.sign(challengeMessage))
+      check(signer.toLowerCase() === owner.toLowerCase(), 'Owner personal signature changed')
+      const typedSigner = (await import('ethers')).verifyTypedData(
+        { chainId: 137, verifyingContract: body.address },
+        { SafeMessage: [{ name: 'message', type: 'bytes' }] },
+        { message: hashMessage(challengeMessage) },
+        body.signature
+      )
+      check(typedSigner.toLowerCase() === owner.toLowerCase(), 'Safe signature does not recover to the owner')
+      const data = erc1271.encodeFunctionData('isValidSignature', [hashMessage(challengeMessage), body.signature])
+      const magic = await rpc('eth_call', [{ to: safe, data }, 'latest'])
+      check(magic.startsWith('0x1626ba7e'), 'Forked Safe rejected the sign-in signature')
+      return { safe, erc1271: true, sandbox: rejection.constructor.name }
     })
   }
 }

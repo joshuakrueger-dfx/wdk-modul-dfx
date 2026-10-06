@@ -7,9 +7,9 @@ import {
 } from '@tetherto/wdk-wallet/protocols'
 import { ProviderErrorReason } from '@tetherto/wdk-wallet'
 import DfxClient from './dfx-client.js'
-import { normalizeSignature, recoverEvmAddress } from './signature.js'
+import { normalizeSignature, recoverEvmAddress, safeMessageTypedData } from './signature.js'
 import { decimal, displayAmount, divideAmounts, minorUnits, positiveAmount, unexpected } from './amounts.js'
-import { BLOCKCHAINS, EVM_BLOCKCHAINS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS, MAX_ASSET_DECIMALS, MAX_TIMEOUT_MS } from './constants.js'
+import { BLOCKCHAINS, EVM_BLOCKCHAINS, EVM_CHAIN_IDS, FAILED_STATES, FIAT_DECIMALS, INPUT_ERRORS, MAX_ASSET_DECIMALS, MAX_TIMEOUT_MS } from './constants.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccount} IWalletAccount */
 /** @typedef {import('@tetherto/wdk-wallet').IWalletAccountReadOnly} IWalletAccountReadOnly */
@@ -238,6 +238,10 @@ export default class DfxProtocol extends FiatProtocol {
    * Generates a URL for a user to purchase a crypto asset with fiat currency.
    * Each opening uses a fresh authenticated session.
    * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
+   * A recovered signer that differs from the account is never used as the DFX account.
+   * When that account can sign typed data and the constructor network has a DFX chain id,
+   * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
+   * signature is submitted for that same address.
    * Account errors pass through only for the exact constructors listed below;
    * subclasses and other account failures become ProviderError with the original cause.
    *
@@ -259,7 +263,6 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the constructor network is missing.
    * @throws {ValueError} If the network differs from the account network.
    * @throws {ValueError} If recipient differs from the account address.
-   * @throws {ValueError} On EVM constructor networks, if the account signature resolves to an address other than the account address.
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ProviderError} If authentication fails.
    * @throws {ProviderError} If the API request fails.
@@ -300,6 +303,10 @@ export default class DfxProtocol extends FiatProtocol {
    * Generates a URL for a user to sell a crypto asset for fiat currency.
    * Each opening uses a fresh authenticated session.
    * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
+   * A recovered signer that differs from the account is never used as the DFX account.
+   * When that account can sign typed data and the constructor network has a DFX chain id,
+   * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
+   * signature is submitted for that same address.
    * Account errors pass through only for the exact constructors listed below;
    * subclasses and other account failures become ProviderError with the original cause.
    *
@@ -321,7 +328,6 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the constructor network is missing.
    * @throws {ValueError} If the network differs from the account network.
    * @throws {ValueError} If refundAddress differs from the account address.
-   * @throws {ValueError} On EVM constructor networks, if the account signature resolves to an address other than the account address.
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ProviderError} If authentication fails.
    * @throws {ProviderError} If the API request fails.
@@ -362,6 +368,10 @@ export default class DfxProtocol extends FiatProtocol {
    * Retrieves the details of a specific transaction from the provider.
    * Accepts a UID or external ID and renews an expired session once.
    * Parallel detail calls share one sign-in per instance, independently of widgets.
+   * A recovered signer that differs from the account is never used as the DFX account.
+   * When that account can sign typed data and the constructor network has a DFX chain id,
+   * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
+   * signature is submitted for that same address.
    * Only exact ProviderRequiredError and ProviderError account errors pass through;
    * all other account failures become ProviderError with the original cause.
    *
@@ -372,7 +382,6 @@ export default class DfxProtocol extends FiatProtocol {
    * @throws {ValueError} If the UID is empty or whitespace-only.
    * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
    * @throws {ValueError} If the identifier is rejected by DFX.
-   * @throws {ValueError} On EVM constructor networks, if the account signature resolves to an address other than the account address.
    * @throws {NoSuchElementError} If no transaction exists for the given id.
    * @throws {NoSuchElementError} If the transaction is a Swap.
    * @throws {NoSuchElementError} If the transaction is a Referral.
@@ -496,19 +505,29 @@ export default class DfxProtocol extends FiatProtocol {
     return this.#renewing
   }
 
+  /**
+   * Keeps the DFX account on the smart-account address.
+   * A deployed Safe accepts the typed-data signature; the owner address is never submitted.
+   *
+   * @private
+   */
+  async #contractSignature (method, message, signature, accountAddress) {
+    const signer = recoverEvmAddress(message, signature)
+    if (signer === undefined || sameAddress(signer, accountAddress)) return signature
+    const chainId = EVM_CHAIN_IDS[this._config.network]
+    if (chainId === undefined || typeof this._account.signTypedData !== 'function') return signature
+    return this._accountCall(method, 'signTypedData', safeMessageTypedData(chainId, accountAddress, message))
+  }
+
   /** @private */
   async _authenticate (method, address) {
     if (!this._hasAccount()) throw new ProviderError('A signing account is required for transaction details', { reason: ProviderErrorReason.UNAUTHORIZED })
     const accountAddress = address ?? await this._accountCall(method, 'getAddress')
     const evm = EVM_BLOCKCHAINS.has(this._config.network)
     const challenge = record(await this._client._request(`/v1/auth/signMessage?${new URLSearchParams({ address: accountAddress })}`))
-    const signature = await this._accountCall(method, 'sign', textField(challenge.message))
-    if (evm) {
-      const signer = recoverEvmAddress(challenge.message, signature)
-      if (signer !== undefined && !sameAddress(signer, accountAddress)) {
-        throw new ValueError(`Account signature resolves to ${signer}, not to the account ${accountAddress}; smart accounts are not supported because DFX would deliver to the signer`)
-      }
-    }
+    const challengeText = textField(challenge.message)
+    let signature = await this._accountCall(method, 'sign', challengeText)
+    if (evm) signature = await this.#contractSignature(method, challengeText, signature, accountAddress)
     const body = {
       address: accountAddress,
       signature: normalizeSignature(this._config.network, signature),

@@ -180,6 +180,20 @@ export const EVM_BLOCKCHAINS = new Set([
   'base', 'haqq', 'gnosis', 'plasma', 'citrea', 'citreatestnet'
 ])
 
+// Chain ids DFX uses for ERC-1271. Haqq and Plasma are absent: DFX publishes no id for them.
+export const EVM_CHAIN_IDS = Object.freeze({
+  ethereum: 1,
+  sepolia: 11155111,
+  binancesmartchain: 56,
+  optimism: 10,
+  arbitrum: 42161,
+  polygon: 137,
+  base: 8453,
+  gnosis: 100,
+  citrea: 4114,
+  citreatestnet: 5115
+})
+
 // Blockchain enum from AssetDetailDto in the DFX Swagger snapshot, 2026-09-24.
 export const BLOCKCHAINS = Object.freeze([
   'Bitcoin', 'Lightning', 'Spark', 'Arkade', 'Firo', 'Monero', 'Zano', 'Ethereum',

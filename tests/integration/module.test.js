@@ -119,14 +119,21 @@ describe('@dfx.swiss/wdk-protocol-fiat-dfx', () => {
       ['buy', { ...PAIR, fiatAmount: 10000n }],
       ['sell', { ...PAIR, fiatAmount: 10000n }],
       ['getTransactionDetail', UID]
-    ])('%s rejects a smart account after one challenge and signature without login', async (method, input) => {
+    ])('%s submits the smart-account address and a Safe signature', async (method, input) => {
       const smart = new DummySmartAccount(await freshAccount())
       const protocol = new DfxProtocol(smart, LOCAL_CONFIG)
 
-      await failure(protocol[method](input), ValueError,
-        'Account signature resolves to 0x405005c7c4422390f4b334f64cf20e0b767131d0, not to the account 0x0000000000000000000000000000000000000001; smart accounts are not supported because DFX would deliver to the signer')
+      await failure(protocol[method](input), ProviderError, 'Invalid signature', 'UNAUTHORIZED')
       expect(smart.messages).toEqual([challengeMessage(DUMMY_SMART_ADDRESS)])
-      expect(await serverControl('/__events')).toEqual([`challenge:${DUMMY_SMART_ADDRESS}`])
+      expect(smart.typedData).toEqual([{
+        domain: { chainId: 1, verifyingContract: DUMMY_SMART_ADDRESS },
+        types: { SafeMessage: [{ name: 'message', type: 'bytes' }] },
+        message: { message: expect.stringMatching(/^0x[0-9a-f]{64}$/) }
+      }])
+      expect(await serverControl('/__events')).toEqual([
+        `challenge:${DUMMY_SMART_ADDRESS}`,
+        `login:${DUMMY_SMART_ADDRESS}`
+      ])
     })
 
     test.each([['buy', 'recipient'], ['sell', 'refundAddress']])('%s rejects a mismatching delivery address before signing', async (method, field) => {
