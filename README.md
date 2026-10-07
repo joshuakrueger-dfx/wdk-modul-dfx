@@ -372,9 +372,11 @@ same fallback.
 ## Security
 
 See [SECURITY.md](SECURITY.md) for private vulnerability reporting. No logging or
-telemetry is implemented. Private keys and seeds are never read; authentication
-uses the account's signing method and the exact message returned by the chosen
-DFX environment (including sandbox prefixes).
+telemetry is implemented. Private keys and seeds are never read. `sign` receives
+the exact message returned by the chosen DFX environment (including sandbox
+prefixes). When the recovered signer differs, `signTypedData` is available and the
+constructor network has a known chain id, the account also signs Safe EIP-712
+typed data whose `SafeMessage` bytes are the EIP-191 hash of that message.
 
 Widget URLs contain a bearer session token: deliver them only to the user-facing
 browser and do not log or share them. Tokens are not persisted by the module.
