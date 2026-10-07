@@ -42,7 +42,6 @@ export async function startServer () {
   const events = []
   let faults = {}
   let logins = 0
-  let challengeCount = 0
   const server = createServer(async (request, response) => {
     const send = (status, raw) => {
       response.writeHead(status, { 'Content-Type': 'application/json' })
@@ -59,7 +58,6 @@ export async function startServer () {
         if (url.searchParams.get('preserveRegistrations') !== 'true') registeredAddresses.clear()
         events.length = 0
         logins = 0
-        challengeCount = 0
         faults = JSON.parse(body || '{}')
         send(200, '{}')
         return
@@ -72,10 +70,6 @@ export async function startServer () {
           [...url.searchParams.keys()].join() === 'address' && /^0x[0-9a-f]{40}$/i.test(url.searchParams.get('address'))) {
         const address = url.searchParams.get('address')
         events.push(`challenge:${address}`)
-        if (++challengeCount === 2 && faults.ownerChallenge) {
-          send(401, JSON.stringify({ statusCode: 401, message: 'Unauthorized', error: 'Unauthorized' }))
-          return
-        }
         const raw = responses.challenge.raw.replaceAll(ADDRESS_PLACEHOLDER, address)
         challenges.set(address.toLowerCase(), JSON.parse(raw).message)
         send(responses.challenge.status, raw)

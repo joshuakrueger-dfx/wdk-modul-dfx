@@ -99,11 +99,14 @@ export default class DfxProtocol extends FiatProtocol {
      * Generates a URL for a user to purchase a crypto asset with fiat currency.
      * Each opening uses a fresh authenticated session.
      * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
-     * ERC-4337 purchases go to the signing owner EOA outside the smart account.
+     * A recovered signer that differs from the account is never used as the DFX account.
+     * When the recovered signer differs, that account can sign typed data and the constructor network has a DFX chain id,
+     * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
+     * signature is submitted for that same address.
      * Account errors pass through only for the exact constructors listed below;
      * subclasses and other account failures become ProviderError with the original cause.
      *
-     * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the authentication address, the signing owner EOA for ERC-4337.
+     * @param {DfxBuyOptions} options - Purchase asset, currency and one amount in smallest units. recipient must match the account address.
      * @returns {Promise<BuyResult>} An object with the purchase widget URL (`buyUrl`).
      * @throws {AccountRequiredError} If a signing account is unavailable.
      * @throws {AccountRequiredError} If an account call reports a missing account.
@@ -120,7 +123,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If the per-operation network is empty or whitespace-only.
      * @throws {ValueError} If the constructor network is missing.
      * @throws {ValueError} If the network differs from the account network.
-     * @throws {ValueError} If recipient differs from the authentication address. Explicit Safe recipients are rejected.
+     * @throws {ValueError} If recipient differs from the account address.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ProviderError} If authentication fails.
      * @throws {ProviderError} If the API request fails.
@@ -155,10 +158,14 @@ export default class DfxProtocol extends FiatProtocol {
      * Generates a URL for a user to sell a crypto asset for fiat currency.
      * Each opening uses a fresh authenticated session.
      * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
+     * A recovered signer that differs from the account is never used as the DFX account.
+     * When the recovered signer differs, that account can sign typed data and the constructor network has a DFX chain id,
+     * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
+     * signature is submitted for that same address.
      * Account errors pass through only for the exact constructors listed below;
      * subclasses and other account failures become ProviderError with the original cause.
      *
-     * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the authentication address, the signing owner EOA for ERC-4337.
+     * @param {DfxSellOptions} options - Sale asset, currency and one amount in smallest units. refundAddress must match the account address.
      * @returns {Promise<SellResult>} An object with the sale widget URL (`sellUrl`).
      * @throws {AccountRequiredError} If a signing account is unavailable.
      * @throws {AccountRequiredError} If an account call reports a missing account.
@@ -175,7 +182,7 @@ export default class DfxProtocol extends FiatProtocol {
      * @throws {ValueError} If the per-operation network is empty or whitespace-only.
      * @throws {ValueError} If the constructor network is missing.
      * @throws {ValueError} If the network differs from the account network.
-     * @throws {ValueError} If refundAddress differs from the authentication address. Explicit Safe refund addresses are rejected.
+     * @throws {ValueError} If refundAddress differs from the account address.
      * @throws {ValueError} If externalTransactionId is not 1–256 characters from A-Z, a-z, 0-9, dot, underscore, colon and hyphen.
      * @throws {ProviderError} If authentication fails.
      * @throws {ProviderError} If the API request fails.
@@ -210,6 +217,10 @@ export default class DfxProtocol extends FiatProtocol {
      * Retrieves the details of a specific transaction from the provider.
      * Accepts a UID or external ID and renews an expired session once.
      * Parallel detail calls share one sign-in per instance, independently of widgets.
+     * A recovered signer that differs from the account is never used as the DFX account.
+     * When the recovered signer differs, that account can sign typed data and the constructor network has a DFX chain id,
+     * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
+     * signature is submitted for that same address.
      * Only exact ProviderRequiredError and ProviderError account errors pass through;
      * all other account failures become ProviderError with the original cause.
      *
@@ -233,7 +244,6 @@ export default class DfxProtocol extends FiatProtocol {
     /**
      * Retrieves a list of supported crypto assets from the provider.
      * Includes only assets available for buying or selling with known decimals.
-     * Bitcoin/BTC, Lightning/BTC, Arkade/BTC and Firo/FIRO default to 8 when API decimals are absent or null.
      *
      * @returns {Promise<SupportedCryptoAsset[]>} Tickers, lowercase blockchain names and base-unit decimals.
      * @throws {ProviderError} If the API fails.

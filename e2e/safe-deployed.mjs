@@ -1,11 +1,11 @@
 // Live DFX sandbox probe. Only wallet RPCs use the local Polygon fork.
-// Creates sandbox authentication sessions; does not submit buy/sell payments.
+// buy/sell submit the Safe address. The fork proves ERC-1271; the sandbox cannot see it.
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import { verifyMessage } from 'ethers'
+import { hashMessage, Interface, verifyMessage } from 'ethers'
 import WDK from '@tetherto/wdk'
 import WalletManagerEvmErc4337 from '@tetherto/wdk-wallet-evm-erc-4337'
 import DfxProtocol from '@dfx.swiss/wdk-protocol-fiat-dfx'
@@ -18,6 +18,9 @@ const MESSAGE = 'DFX deployed Safe owner-signature probe v1'
 const results = []
 const stop = new AbortController()
 let child, childDone, childError, wdk, rpcUrl, account, fiat, safe, owner, signatureBefore
+const dfxRequests = []
+const authBodies = []
+let challengeMessage
 let rpcId = 0
 let anvilStderr = ''
 let anvilStderrTruncated = false
@@ -175,7 +178,18 @@ async function run () {
         chainId: 137, provider: rpcUrl, bundlerUrl: 'https://bundler.invalid',
         safeModulesVersion: '0.3.0', useNativeCoins: true
       })
-      .registerProtocol('polygon', 'dfx', DfxProtocol, { environment: 'sandbox', network: 'polygon' })
+      .registerProtocol('polygon', 'dfx', DfxProtocol, {
+        environment: 'sandbox',
+        network: 'polygon',
+        fetch: async (url, init) => {
+          const path = new URL(url).pathname
+          dfxRequests.push(`${init?.method ?? 'GET'} ${path}`)
+          if (path === '/v1/auth' && init?.method === 'POST') authBodies.push(init.body)
+          const response = await fetch(url, init)
+          if (path === '/v1/auth/signMessage') challengeMessage = JSON.parse(await response.clone().text()).message
+          return response
+        }
+      })
     account = await wdk.getAccount('polygon', 0)
     safe = await account.getAddress()
     fiat = account.getFiatProtocol('dfx')
@@ -255,40 +269,42 @@ async function run () {
     check(quote.fiatAmount === buyOptions.fiatAmount, 'quoteBuy changed requested fiat amount')
     return { quoted: true, cryptoAmount: String(quote.cryptoAmount), fiatAmount: String(quote.fiatAmount) }
   })
+  const erc1271 = new Interface(['function isValidSignature(bytes32,bytes) view returns (bytes4)'])
   for (const kind of ['buy', 'sell']) {
-    // Session URLs stay in memory and never enter results or console output.
-    let session
-    await step(`${kind} with deployed Safe`, async () => {
-      const response = await fiat[kind](kind === 'buy' ? buyOptions : {
-        cryptoAsset: 'USDT', fiatCurrency: 'EUR', cryptoAmount: 50n * 10n ** BigInt(asset.decimals)
-      })
-      const url = new URL(response[`${kind}Url`])
-      session = url.searchParams.get('session')
-      check(url.protocol === 'https:' && session, 'Missing HTTPS widget URL or session')
-      return { sessionPresent: true }
+    await step(`${kind} submits the Safe and the fork accepts the signature`, async () => {
+      dfxRequests.length = 0
+      authBodies.length = 0
+      challengeMessage = undefined
+      let rejection
+      try {
+        await fiat[kind](kind === 'buy' ? buyOptions : {
+          cryptoAsset: 'USDT', fiatCurrency: 'EUR', cryptoAmount: 50n * 10n ** BigInt(asset.decimals)
+        })
+      } catch (error) { rejection = error }
+      check(rejection?.constructor?.name === 'ProviderError', 'Sandbox did not reject the anvil-only Safe')
+      check(rejection.reason === 'UNAUTHORIZED', 'Sandbox rejection was not an authentication failure')
+      check(dfxRequests.filter(request => request === 'GET /v1/auth/signMessage').length === 1, 'Expected exactly one DFX sign-in challenge')
+      check(authBodies.length === 1, 'Expected one DFX sign-in')
+      const body = JSON.parse(authBodies[0])
+      check(body.address.toLowerCase() === safe.toLowerCase(), 'Sign-in address is not the Safe')
+      check(body.address.toLowerCase() !== owner.toLowerCase(), 'Sign-in address is the owner')
+      check(body.blockchain === 'Polygon', 'Sign-in blockchain is not Polygon')
+      check(typeof challengeMessage === 'string' && challengeMessage.length > 0, 'Missing DFX challenge')
+      const signer = verifyMessage(challengeMessage, await account.sign(challengeMessage))
+      check(signer.toLowerCase() === owner.toLowerCase(), 'Owner personal signature changed')
+      const typedSigner = (await import('ethers')).verifyTypedData(
+        { chainId: 137, verifyingContract: body.address },
+        { SafeMessage: [{ name: 'message', type: 'bytes' }] },
+        { message: hashMessage(challengeMessage) },
+        body.signature
+      )
+      check(typedSigner.toLowerCase() === owner.toLowerCase(), 'Safe signature does not recover to the owner')
+      const data = erc1271.encodeFunctionData('isValidSignature', [hashMessage(challengeMessage), body.signature])
+      const magic = await rpc('eth_call', [{ to: safe, data }, 'latest'])
+      check(magic.startsWith('0x1626ba7e'), 'Forked Safe rejected the sign-in signature')
+      return { safe, erc1271: true, sandbox: rejection.constructor.name }
     })
-    await step(`${kind} session: GET /v2/user is 200 and owner authenticated`, async () => {
-      const response = await fetch(`${API}/v2/user`, {
-        headers: { Authorization: `Bearer ${session}` },
-        signal: AbortSignal.any([stop.signal, AbortSignal.timeout(30000)])
-      })
-      check(response.status === 200, 'Sandbox /v2/user did not return 200')
-      const profile = await response.json()
-      const profileAddress = profile.activeAddress?.address
-      check(typeof profileAddress === 'string' && profileAddress.toLowerCase() === owner.toLowerCase(), 'Sandbox profile address is not signing owner')
-      const jwtAddress = JSON.parse(Buffer.from(session.split('.')[1], 'base64url').toString('utf8')).address
-      check(typeof jwtAddress === 'string' && jwtAddress.toLowerCase() === owner.toLowerCase(), 'Sandbox JWT address is not signing owner')
-      return { status: response.status, address: owner, profileAddress, jwtAddress }
-    })
-    session = undefined
   }
-  await step('Safe recipient rejected with ValueError and owner hint', async () => {
-    let rejection
-    try { await fiat.buy({ ...buyOptions, recipient: safe }) } catch (error) { rejection = error }
-    check(rejection?.constructor?.name === 'ValueError', 'Safe recipient did not raise ValueError')
-    check(/owner/i.test(rejection.message) && rejection.message.toLowerCase().includes(owner.toLowerCase()), 'ValueError lacks signing-owner address hint')
-    return { rejected: true, ownerHint: true }
-  })
 }
 
 try {

@@ -1,13 +1,16 @@
 # Testing
 
 This document records how `@dfx.swiss/wdk-protocol-fiat-dfx` was verified, what each test layer proves, and what it
-does not prove. Every result below was produced by running the named command. Nothing is inferred from reading code
+does not prove. Every result below was produced by running the named command. A row that says the script was not
+re-run states what that script expects, not a measured result. Nothing is inferred from reading code
 unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
-  - **The last commit that changes this sentence (2026-09-30, after the fifth review pass):** lint, unit, integration,
-    coverage and mutation layers —
-    the first four rows of the summary table. It includes these library changes made after `27dd624`: one shared
+  - **This branch:** the lint, unit, integration and coverage rows, recorded in section 1. Lint, unit and integration
+    ran on Node v26.7.0. Coverage ran on Node 22.22.0.
+  - **2026-09-30, after the fifth review pass:** the mutation-probe row of the summary only. That row was not repeated
+    on this branch. That revision
+    includes these library changes made after `27dd624`: one shared
     transaction-detail session per instance, established by a single sign-in that concurrent `getTransactionDetail`
     calls share (first sign-in and renewal after HTTP 401); `buy`/`sell` sign in fresh and never touch that session; a
     401 clears the session only if it is still the rejected token, and a renewed token rejected with 401 is dropped; a
@@ -16,17 +19,24 @@ unless it says so.
     itself (non-EVM or EOA); the HTTP timeout also accepts a `bigint` (fifth pass of the review skills, section 10).
     Integration expectations use address and signature literals computed independently with
     ethers for the public test phrase; no wallet call computes an expected value.
-  - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the remaining rows of the summary table
-    (the only later library change is the `bigint` timeout above, plus documentation and named constants),
+  - **Current sign-in:** the account address is the DFX account. `recipient` and
+    `refundAddress` are checked before every sign-in. When the account implements
+    `signTypedData`, the recovered signer differs and the constructor network has a known chain id, authentication
+    sends a Safe EIP-712 signature and does not submit the owner. Assets without API
+    decimals stay unlisted. The owner-cache drop and the delivery check limited to
+    non-EVM or EOA above describe the 2026-09-30 revision only.
+  - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the summary rows that name this revision,
     re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
     byte for byte with the repository before the run. Section 11 keeps the earlier run against `ec9b788`.
+    The live-matrix counts are this run. A summary row that says the script on this branch was not re-run is not this run.
   - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
     on 2026-09-29 the same production order, wallet and DFX account were re-checked with `20ec94d` without a payment
     (section 12).
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
-- **Runtime:** Node.js `v22.22.0` (official binary, version printed in every run), macOS arm64; Bare for the Bare entry point.
-- **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.19
+- **Runtime:** Historical runs used Node.js `v22.22.0`. On this branch, lint, unit and integration used Node v26.7.0, and coverage used Node 22.22.0. macOS arm64; Bare for the Bare entry point.
+- **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.17
+  (a single copy, also used by `@tetherto/wdk-wallet-evm`; 1.0.0-beta.19 before 2026-10-02)
   and `@tetherto/wdk-wallet-evm` 1.0.0-beta.19.
 - **WDK packages used by the recorded `e2e/` runs:** `@tetherto/wdk` 1.0.0-beta.18,
   `@tetherto/wdk-wallet` 1.0.0-beta.20, `@tetherto/wdk-wallet-evm` 1.0.0-beta.19,
@@ -41,40 +51,42 @@ unless it says so.
 
 | Layer | Command | Result |
 | --- | --- | --- |
-| Integration, local | `npm run test:integration` | 45/45 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
-| Unit tests | `npm run lint && npm test` | lint output empty; 707/707 tests in 1 suite |
-| Coverage (unit + integration) | `npm run test:coverage` | 752/752 tests in 2 suites; 100 % statements, branches, functions, lines |
-| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected across unit and integration suites, each by 1–233 tests |
-| Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures |
-| Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps; the 6 failures are expected (see below) |
-| Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps; the 4 failures are a DFX data issue (see below) |
-| Widget as the user sees it | `cd e2e && node widget-check.mjs` | the widget opens signed in, amount/asset/network prefilled, in sandbox and production |
-| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | 7/7 journeys reach the DFX page title (`Buy`/`Sell`), 0 page errors, exit 0 (latest run, section 12); the Solana journey fails whenever its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
-| After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps (second run; the first stopped at a transient local `fetch failed`, section 12) |
-| Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Lightning, Arkade, Firo listed and quoted in sandbox and production |
-| Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched |
-| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules) |
-| KYC in the widget | `cd e2e && node kyc-widget.mjs` | e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call |
-| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 13/13 steps: the smart account is deployed on a Polygon fork, its signature is identical before and after, `buy`/`sell` work in the sandbox |
+| Integration, local | `npm run test:integration` | 35/35 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
+| Unit tests | `npm run lint && npm test` | lint output empty; 690/690 tests in 2 suites |
+| Coverage (unit + integration) | `npm run test:coverage` | 725/725 tests in 3 suites on Node 22.22.0; 100 % statements, branches, functions, lines |
+| Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected on 2026-09-30, each by 1–233 tests; not repeated on this branch |
+| Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures on `20ec94d`. The script on this branch was not re-run |
+| Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps on `20ec94d`; the 6 failures are expected (section 2). The script on this branch was not re-run |
+| Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps on `20ec94d`; the 4 failures are a DFX data issue (section 2). The script on this branch was not re-run |
+| Widget as the user sees it | `cd e2e && node widget-check.mjs` | On `20ec94d`, the widget opens signed in, amount/asset/network prefilled, in sandbox and production. The script on this branch was not re-run |
+| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | Not re-run on this branch. The script expects Bitcoin to stay unlisted, the ERC-4337 journey to be rejected for an undeployed Safe before the checkout frame, and the other journeys to reach the DFX page title (`Buy`/`Sell`). The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
+| After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps on `20ec94d` (second run; the first stopped at a transient local `fetch failed`, section 12). The script on this branch was not re-run |
+| Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Not re-run on this branch. The script expects sandbox to list only Firo, production to list none of Bitcoin, Lightning, Arkade and Firo, and unlisted assets to be rejected with Missing decimals |
+| Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | On `20ec94d`, the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched. The script on this branch was not re-run |
+| Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | On `20ec94d`: 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules). The script on this branch was not re-run |
+| KYC in the widget | `cd e2e && node kyc-widget.mjs` | On `20ec94d`: e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call. The script on this branch was not re-run |
+| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | Not re-run on this branch. The script deploys the smart account on a Polygon fork and checks that its ERC-1271 check accepts the Safe signature; the sandbox does not see the fork |
 | Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; fifth pass of all skills on `498d4e6` (2026-09-30) |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
 
 ## 1. Unit tests
 
-`npm run lint && npm test` (Node 22.22.0): `standard` prints nothing; Jest runs the unit suite, 707 tests, all passing;
-`npm run test:coverage` adds the integration suite (752 tests together) and reaches 100 % coverage in all four categories. The
-session and signer-cache scenarios that build state across successive public calls live in the integration suite
+On this branch, `npm run lint` prints nothing and `npm test` passes 690 tests in 2 suites (Node v26.7.0).
+`npm run test:integration` passes 35 tests in 1 suite on that same Node version.
+`npm run test:coverage` on Node 22.22.0 passes those 725 tests in 3 suites and reaches 100 % coverage in all four categories. The
+session scenarios that build state across successive public calls live in the integration suite
 (skill rule R3). Parallel calls to the same method within one Act belong in unit tests. All
 unit tests use an injected `fetch` routed by method and URL and cover
 both trade directions, both amount modes, lossless 18-decimal arithmetic, every HTTP-status mapping, every DFX
-transaction state, the account-error allowlist per method, signature normalisation (Solana, Spark), EIP-191 owner
-recovery for ERC-4337 accounts with real secp256k1 keys, and the native-decimals fallback.
+transaction state, the account-error allowlist per method, signature normalisation (Solana, Spark), sign-in as the
+account address, a Safe EIP-712 signature when the recovered signer differs, and assets whose API decimals are null.
+There is no cached signing owner.
 
 ### Mutation probes
 
 A passing suite only matters if it fails on wrong code. Each mutation below was applied to the source (asserting the
-pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 59 were detected. The fifth review pass added seven: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision), the request timer cleared right after it is set, and the request timer left running after a response. The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. The cleared timer first survived as well: the rebuilt timer tests ran the timer callback by hand; they now reach the deadline through the fake clock and check that the request is still open one millisecond before it and aborted at it. A timer left running after a response also survived at first; a test now checks that no timer remains after a successful request. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
+pattern matched exactly once), the unit and integration suites were run in band, and the source was restored. All 59 were detected on 2026-09-30 and were not repeated on this branch. The fifth review pass added seven: `bigint` timeout not normalized, normalized timeout not passed on, and the three named limits off by one (timer maximum, asset decimals, rate precision), the request timer cleared right after it is set, and the request timer left running after a response. The asset-decimals limit first survived (only 256 was tested, not 255); a test for 255 closed it. The cleared timer first survived as well: the rebuilt timer tests ran the timer callback by hand; they now reach the deadline through the fake clock and check that the request is still open one millisecond before it and aborted at it. A timer left running after a response also survived at first; a test now checks that no timer remains after a successful request. After the shared-session change, mutations of removed code were dropped, and two were dropped as equivalent: reading the shared token slot instead of the local token (no `await` lies between them any more), and a separate check of the rejected token (the clearing directly before it already covers it; the parameter was removed). For one of them (an error class no longer re-exported) the integration suites fail to load, so only the dedicated export test is real evidence there. (Commit `75877e6` stated 43; the correct count at that commit was 42. One mutation, `options.config` not validated, no longer applies since the type guard was removed under C005.)
 
 Examples: sell rate not inverted; sell fee taken from the source side; a failed DFX state mapped to `in_progress`;
 `PayoutInProgress` mapped to `completed`; network binding not enforced; `isValid: false` not checked first; EVM
@@ -95,25 +107,30 @@ The probe script is a local tool and is not part of this repository.
 
 `e2e/live-matrix.mjs` builds a real WDK instance from a fresh random seed for each run, registers each wallet package
 and this module with `registerProtocol`, and calls the module through `account.getFiatProtocol('dfx')`, exactly as an
-integrating wallet does. Per chain it checks: registration; the three catalogues; `quoteBuy` and `quoteSell`;
+integrating wallet does. On the `20ec94d` run, per chain it checked: registration; the three catalogues; `quoteBuy` and `quoteSell`;
 sign-in (via `getTransactionDetail` on an unknown ID, expecting `NoSuchElementError` after a successful sign-in);
 `buy()` and `sell()` URLs; that the session in each URL is valid (`GET /v2/user` returns 200); rejection of a foreign
 `recipient`; rejection of a read-only account; `externalTransactionId` in the URL; and `getTransactionDetail` by
 external ID before any payment.
 
-Chains: Ethereum, Polygon, Arbitrum, Base, Optimism, BNB Smart Chain and Sepolia (`wdk-wallet-evm`); Polygon as an
+Chains in that run: Ethereum, Polygon, Arbitrum, Base, Optimism, BNB Smart Chain and Sepolia (`wdk-wallet-evm`); Polygon as an
 ERC-4337 smart account; Tron; Solana; Bitcoin (BIP-84); Spark.
 
-**Sandbox: 172/178.** The 6 failures are purchases of Sepolia USDT and Spark BTC, which the sandbox lists as
+**Current script, not run live.** An undeployed ERC-4337 account (`smart: true`) is expected to stay unsigned-in:
+`buy`, `sell` and `getTransactionDetail` throw `ProviderError` with reason `UNAUTHORIZED`, and that chain stops.
+Bitcoin with no listed asset is expected to throw `Missing decimals for Bitcoin/BTC`. Sandbox and production were
+not run for this change, so this section has no new step count.
+
+**Sandbox: 172/178 (`20ec94d`).** The 6 failures are purchases of Sepolia USDT and Spark BTC, which the sandbox lists as
 `sellable` but not `buyable`. The module rejects them with `ValueError`, which is the intended behaviour.
 
-**Production: 175/179.** Every mainnet chain signs in and produces valid widget sessions. The 4 failures are all
+**Production: 175/179 (`20ec94d`).** In that run, every mainnet chain signs in and produces valid widget sessions. The 4 failures are all
 Sepolia. Production lists the testnet asset Sepolia/USDT as sellable, and its sell quote fails upstream with
 `Base fee is missing`. This is DFX catalogue data, not module behaviour.
 
-**ERC-4337 accounts.** They sign in with the owner address recovered from the signature, as DFX's own WDK wallet does.
-The widget session belongs to the owner EOA, so DFX delivers to that address and not to the smart account. The test
-confirms that a smart-account address passed as `recipient` is rejected with a message naming the owner address.
+**ERC-4337 accounts (`20ec94d`).** They signed in with the owner address recovered from the signature, as DFX's own WDK wallet did.
+The widget session belonged to the owner EOA, so DFX delivered to that address and not to the smart account. The test
+confirmed that a smart-account address passed as `recipient` was rejected with a message naming the owner address.
 
 **Production side effect.** Signing in creates a DFX user per address. The production run created these throwaway
 test users, none with KYC or funds:
@@ -180,8 +197,10 @@ All 29 steps passed:
 ## 5. Chains without a WDK wallet package
 
 No WDK wallet package exists for Lightning, Arkade or Firo, so no WDK user can currently arrive from those chains.
-`e2e/native-quotes.mjs` confirms that the module still lists them (8 decimals via the native fallback) and quotes them
-in sandbox and production. A Firo sell of 0.01 FIRO is correctly rejected as `AmountTooLow` with DFX's minimum.
+On `20ec94d`, `e2e/native-quotes.mjs` listed them at 8 decimals via the native fallback and quoted them in sandbox and
+production. A Firo sell of 0.01 FIRO was rejected as `AmountTooLow` with DFX's minimum. The script in this branch was
+not run live. It expects sandbox to list only Firo, production to list none of Bitcoin, Lightning, Arkade and Firo,
+and both quote methods to reject each unlisted asset with `ValueError` `Missing decimals for <blockchain>/<asset>`.
 
 ## 6. Real backend processing (2026-09-25)
 
@@ -252,11 +271,11 @@ app behaviour.
 
 ## 8. Deployed ERC-4337 account
 
-`safe-deployed.mjs` forks Polygon with `anvil`. It deploys the WDK smart account there without a bundler, using the
-package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's signature over
-a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner. Against the DFX
-sandbox, `quoteBuy`, `buy()` and `sell()` work with the deployed account, and both sessions belong to the owner address
-(`activeAddress` in `/v2/user` and the JWT `address` claim). A smart-account `recipient` is rejected. 13/13 steps.
+Not run on this branch. What follows is what the script checks, not a measured result of this branch. `safe-deployed.mjs` forks Polygon with `anvil`. It deploys the WDK smart account there without a bundler, using the
+package's own factory data; `eth_getCode` is empty before deployment and non-empty after. The account's personal
+signature over a fixed message is byte-for-byte identical before and after deployment, and it recovers to the owner.
+`buy()` and `sell()` submit the Safe address. The probe calls `isValidSignature` on the forked Safe and expects the
+ERC-1271 magic value. The sandbox API cannot see the fork, so it rejects that sign-in.
 
 ## 9. Real purchase with real money (production, 2026-09-28)
 
@@ -323,8 +342,8 @@ requested two signatures each. Since the shared-session change, parallel `getTra
   return objects, exact error class, message and reason, one act per test.
 - `wdk-review-tests`, second pass on the rebuilt suite: 3 of 11 rules still reported (R1, R3, R11) plus hook
   assertions (T001), naming and the integration environment. All fixed.
-- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (now 45/45, see section
-  11 and the summary) against a local DFX server started
+- Integration tests (`npm run test:integration`, `tests/integration/`): at introduction 12/12 (35/35 on this branch, see section
+  1 and the summary) against a local DFX server started
   from Jest's global setup. It replays sandbox responses recorded on 2026-09-28 (`tests/integration/record.js`,
   fixtures without tokens, seeds or test addresses) and verifies EIP-191 signatures at `POST /v1/auth` like DFX.
   Expected values are fixed literals computed independently from the recorded responses. Checks: 12/12 with all
@@ -447,3 +466,16 @@ Production uses the same code; it was not tested there. The module cannot work a
 - **Drift between the recorded sandbox and the live API.** The integration fixtures are a snapshot of
   2026-09-28. Changes in DFX responses after that date show up in `e2e/live-matrix.mjs`, not in `npm run
   test:integration`; re-record with `node tests/integration/record.js`.
+
+## 13. Behaviour superseded on 2026-10-02
+
+The ERC-4337 owner authentication and native-decimals fallback described in
+sections 1–12, plus the owner-cache drop and the delivery check limited to non-EVM
+or EOA in the 2026-09-30 preamble, are historical results for the revisions named there. In the
+current code, sign-in uses the account address. When the recovered signer differs, the account can sign typed
+data and the constructor network has a DFX chain id, the module sends a Safe
+EIP-712 signature for that address. It does not sign in as the recovered owner.
+Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
+catalog and rejected by trade methods while their API rows carry `decimals: null`;
+sandbox Firo/FIRO remains listed with API `decimals: 8`. In the production catalog recorded on 2026-10-02 (`b5cafa1`), production
+returned null for all four. Production was not fetched again on this branch. An API value, including zero, remains authoritative.

@@ -175,20 +175,24 @@ export const FIAT_DECIMALS = Object.freeze({
   ZWG: 2
 })
 
-// Protocol constants: 1 BTC = 10⁸ sat, as used in DFX's own wallets;
-// FIRO likewise uses 10⁸ base units. API decimals always take precedence.
-// Match the decimal strings returned by parseNumbers for API numeric fields.
-export const NATIVE_DECIMALS = Object.freeze({
-  'Bitcoin/BTC': '8',
-  'Lightning/BTC': '8',
-  'Arkade/BTC': '8',
-  'Firo/FIRO': '8'
-})
-
 export const EVM_BLOCKCHAINS = new Set([
   'ethereum', 'sepolia', 'binancesmartchain', 'optimism', 'arbitrum', 'polygon',
   'base', 'haqq', 'gnosis', 'plasma', 'citrea', 'citreatestnet'
 ])
+
+// Chain ids DFX uses for ERC-1271. Haqq and Plasma are absent: DFX publishes no id for them.
+export const EVM_CHAIN_IDS = Object.freeze({
+  ethereum: 1,
+  sepolia: 11155111,
+  binancesmartchain: 56,
+  optimism: 10,
+  arbitrum: 42161,
+  polygon: 137,
+  base: 8453,
+  gnosis: 100,
+  citrea: 4114,
+  citreatestnet: 5115
+})
 
 // Blockchain enum from AssetDetailDto in the DFX Swagger snapshot, 2026-09-24.
 export const BLOCKCHAINS = Object.freeze([

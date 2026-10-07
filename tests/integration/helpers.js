@@ -37,6 +37,7 @@ export class DummySmartAccount {
     this.account = account
     this.address = address
     this.messages = []
+    this.typedData = []
   }
 
   async getAddress () { return this.address }
@@ -44,6 +45,11 @@ export class DummySmartAccount {
   sign (message) {
     this.messages.push(message)
     return this.account.sign(message)
+  }
+
+  signTypedData (typedData) {
+    this.typedData.push(typedData)
+    return this.account.signTypedData(typedData)
   }
 }
 
