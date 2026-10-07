@@ -239,7 +239,7 @@ export default class DfxProtocol extends FiatProtocol {
    * Each opening uses a fresh authenticated session.
    * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
    * A recovered signer that differs from the account is never used as the DFX account.
-   * When that account can sign typed data and the constructor network has a DFX chain id,
+   * When the recovered signer differs, that account can sign typed data and the constructor network has a DFX chain id,
    * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
    * signature is submitted for that same address.
    * Account errors pass through only for the exact constructors listed below;
@@ -304,7 +304,7 @@ export default class DfxProtocol extends FiatProtocol {
    * Each opening uses a fresh authenticated session.
    * Tickers and networks are case-insensitive; EVM checksum addresses are equivalent.
    * A recovered signer that differs from the account is never used as the DFX account.
-   * When that account can sign typed data and the constructor network has a DFX chain id,
+   * When the recovered signer differs, that account can sign typed data and the constructor network has a DFX chain id,
    * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
    * signature is submitted for that same address.
    * Account errors pass through only for the exact constructors listed below;
@@ -369,7 +369,7 @@ export default class DfxProtocol extends FiatProtocol {
    * Accepts a UID or external ID and renews an expired session once.
    * Parallel detail calls share one sign-in per instance, independently of widgets.
    * A recovered signer that differs from the account is never used as the DFX account.
-   * When that account can sign typed data and the constructor network has a DFX chain id,
+   * When the recovered signer differs, that account can sign typed data and the constructor network has a DFX chain id,
    * sign-in uses a Safe EIP-712 signature for the account address; otherwise the wallet
    * signature is submitted for that same address.
    * Only exact ProviderRequiredError and ProviderError account errors pass through;

@@ -27,9 +27,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
-- Sign EVM smart accounts in as the account address. When `signTypedData` is
-  available and the constructor network has a DFX chain id, authentication sends
-  a Safe EIP-712 signature instead of the owner recovery. Delivery overrides
+- Sign EVM smart accounts in as the account address. When the recovered signer
+  differs, `signTypedData` is available and the constructor network has a DFX
+  chain id, authentication sends a Safe EIP-712 signature instead of the owner
+  recovery. Delivery overrides
   must still match the account address before signing.
 - Require API-provided crypto-asset decimals; assets without them are omitted
   from supported lists and rejected by quote and trade methods.

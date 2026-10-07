@@ -21,7 +21,7 @@ unless it says so.
     ethers for the public test phrase; no wallet call computes an expected value.
   - **Current sign-in:** the account address is the DFX account. `recipient` and
     `refundAddress` are checked before every sign-in. When the account implements
-    `signTypedData` and the constructor network has a known chain id, authentication
+    `signTypedData`, the recovered signer differs and the constructor network has a known chain id, authentication
     sends a Safe EIP-712 signature and does not submit the owner. Assets without API
     decimals stay unlisted. The owner-cache drop and the delivery check limited to
     non-EVM or EOA above describe the 2026-09-30 revision only.
@@ -472,10 +472,10 @@ Production uses the same code; it was not tested there. The module cannot work a
 The ERC-4337 owner authentication and native-decimals fallback described in
 sections 1–12, plus the owner-cache drop and the delivery check limited to non-EVM
 or EOA in the 2026-09-30 preamble, are historical results for the revisions named there. In the
-current code, sign-in uses the account address. When the account can sign typed
+current code, sign-in uses the account address. When the recovered signer differs, the account can sign typed
 data and the constructor network has a DFX chain id, the module sends a Safe
 EIP-712 signature for that address. It does not sign in as the recovered owner.
 Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
 catalog and rejected by trade methods while their API rows carry `decimals: null`;
-sandbox Firo/FIRO remains listed with API `decimals: 8`. In the last recorded production catalog, production
+sandbox Firo/FIRO remains listed with API `decimals: 8`. In the production catalog recorded on 2026-10-02 (`b5cafa1`), production
 returned null for all four. Production was not fetched again on this branch. An API value, including zero, remains authoritative.
