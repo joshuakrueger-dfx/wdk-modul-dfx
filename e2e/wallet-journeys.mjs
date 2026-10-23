@@ -65,13 +65,13 @@ async function stopServer () {
 
 const BASE = `http://localhost:${PORT}`
 const JOURNEYS = [
-  { name: 'eth-eoa-buy-usdt', smart: false, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
+  { name: 'eth-eoa-buy-usdt', direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
   { name: 'eth-4337-buy-usdt', smart: true, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
-  { name: 'tron-buy-usdt', smart: false, direction: 'buy', asset: /USDT.*tron/i, fiat: 'CHF', amount: '100' },
-  { name: 'solana-sell-usdt', smart: false, direction: 'sell', asset: /USDT.*solana/i, fiat: 'EUR', amount: '50' },
-  { name: 'bitcoin-buy-btc', smart: false, direction: 'buy', asset: /BTC.*bitcoin/i, fiat: 'EUR', amount: '100' },
-  { name: 'spark-sell-btc', smart: false, direction: 'sell', asset: /BTC.*spark/i, fiat: 'EUR', amount: '0.001', crypto: true },
-  { name: 'eth-too-low', smart: false, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '1' }
+  { name: 'tron-buy-usdt', direction: 'buy', asset: /USDT.*tron/i, fiat: 'CHF', amount: '100' },
+  { name: 'solana-sell-usdt', direction: 'sell', asset: /USDT.*solana/i, fiat: 'EUR', amount: '50' },
+  { name: 'bitcoin-buy-btc', unlisted: true, direction: 'buy', asset: /BTC.*bitcoin/i, fiat: 'EUR', amount: '100' },
+  { name: 'spark-sell-btc', direction: 'sell', asset: /BTC.*spark/i, fiat: 'EUR', amount: '0.001', crypto: true },
+  { name: 'eth-too-low', direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '1' }
 ]
 const tid = id => `[data-testid="${id}"], #${id}`
 const masked = s => String(s ?? '').replace(/((?:session|access_token|token)(?:=|%3D))[^&\s"<>#]*/gi, '$1[REDACTED]').replace(/Bearer\s+[^\s"<>]+/gi, 'Bearer [REDACTED]').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED-JWT]')
@@ -116,9 +116,26 @@ try {
             return document.querySelector('#asset-select option') || (offer && offer !== 'Verfügbare Angebote werden geladen …')
           })
           const select = page.locator(tid('asset-select'))
+          await waitForState(page, 'Asset catalog status did not settle', () => {
+            const status = document.querySelector('#asset-select')?.dataset.catalog
+            return status && status !== 'loading'
+          })
           const options = await select.locator('option').allTextContents()
           const pick = options.find(o => j.asset.test(o))
           out.assetOptions = options.length
+          const catalog = await select.getAttribute('data-catalog')
+          if (pick && j.unlisted) throw new Error(`Asset is unexpectedly offered: ${pick}`)
+          if (!pick && j.unlisted) {
+            if (catalog === 'error') throw new Error('Asset catalog failed to load')
+            if (catalog === 'empty') throw new Error('Asset catalog offers no usable asset and fiat combination for this wallet')
+            if (catalog !== 'loaded') throw new Error(`Unexpected asset catalog status: ${catalog}`)
+            out.excluded = true
+            await shot('2-excluded')
+            out.pageErrors = errors.length
+            results.push(out)
+            console.log(JSON.stringify(out, null, 1))
+            continue
+          }
           if (!pick) throw new Error(`asset not offered: ${j.asset} in [${options.slice(0, 12).join(' | ')}]`)
           await select.selectOption({ label: pick })
           await page.locator(tid('fiat-select')).selectOption(j.fiat).catch(() => {})

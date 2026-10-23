@@ -39,6 +39,19 @@ signature differential needs no network after installation. Wallet journeys need
 loopback port 4748 free (override with `WALLET_SIM_PORT`); they start and stop their own simulator for every journey.
 Do not start a separate simulator at the same time.
 
+## Bare entry point
+
+From `e2e/`, run the stubbed smoke probe with:
+
+```sh
+npx --yes bare@1.34.1 bare-smoke.mjs
+```
+
+It imports the package's `bare.js` entry point, performs a stubbed sandbox sign-in,
+and checks the submitted Safe address and ERC-6492-wrapped signature. It does not
+connect to a network or authenticate with a real DFX API. The expected wrapper
+and its derivation details are in `fixtures/bare-smoke-expected.json`.
+
 ## Side effects and output
 
 The live matrix creates fresh wallets and DFX users through authentication, both
@@ -63,7 +76,8 @@ account/payment information; treat output as local test data. Filenames are reus
 on subsequent runs, except for the full-stack screenshots with unique run IDs.
 
 These are the original exploratory probes, not a uniform assertion suite. The
-matrix records failed steps but exits zero; native quotes report `ERR` inline;
+matrix records failed steps but exits zero; native quotes exit nonzero on an
+unexpected listing or rejection;
 the differential prints mismatch counts. Inspect these probes' output, not just
 exit codes. The journey runner exits nonzero if a journey records a `stop` or
 page errors. In sandbox, `eth-too-low` is an ordinary flow because 1 EUR is
@@ -142,7 +156,10 @@ permissions (no group or other access), e.g. `0600`. Reading rejects symlinks.
 
 ### Native-chain quotes
 
-Lightning, Arkade and Firo, without wallet authentication:
+Verifies the listing of Bitcoin, Lightning, Arkade and Firo: in sandbox only
+Firo is expected to be listed, with `DFX_ENV=production` none of the four. For
+every unlisted asset, both quote methods must reject with `ValueError`
+`Missing decimals for <blockchain>/<asset>`:
 
 ```sh
 node native-quotes.mjs > out/native-quotes-sandbox.log 2>&1
@@ -163,6 +180,10 @@ node signature-diff.mjs > out/signature-diff.log 2>&1
 
 Runs all seven journeys, or one by name. Each journey gets a fresh server process
 and wallet state, with a 600-second browser-page timeout (ten times the state timeout).
+The ERC-4337 journey signs in with an undeployed Safe and follows the checkout,
+return and order-status flow used by the EOA journeys. The Bitcoin journey checks
+that BTC is not offered for selection; it fails if the catalog request fails or
+offers no usable asset and fiat combination for the prepared wallet.
 On ordinary completion or failure, cleanup sends SIGTERM, then SIGKILL after
 5 seconds if needed. If the server still has not exited after another 5 seconds,
 the runner reports its PID and sets a nonzero exit code; the remaining journeys still run.
@@ -212,7 +233,14 @@ production also refreshes every 30 seconds while the page is open. Failed or
 unavailable reads display “–”; Bitcoin and Spark have no configured public RPC
 and are not queried. Native balances follow the configured chain RPCs even in
 DFX sandbox mode. Smart-account balances belong to the displayed smart-account
-address, while DFX purchases use its owner address as noted in the simulator.
+address. Authenticated DFX methods sign in as that address. On a known chain id,
+when the recovered signer differs and the account implements `signTypedData`,
+the module sends a Safe EIP-712 signature. The module wraps Safe signatures only
+on networks in `ERC6492_NETWORKS` (Ethereum, Sepolia, BNB Smart Chain, Optimism,
+Arbitrum, Polygon, Base, Gnosis and Plasma), for which the DFX API is intended to verify
+ERC-6492; an API without ERC-6492 support rejects an undeployed Safe and a
+wrapped signature from a deployed Safe. Wrapping also requires that the owner
+predicts the account with the WDK Safe 0.3.0 parameters.
 
 If `WALLET_SIM_ORDERS_FILE` is set, its parent directory must already exist.
 Orders are saved atomically with permissions `0600` and loaded at startup.
@@ -329,10 +357,23 @@ node kyc-widget.mjs > out/kyc-widget.log 2>&1
 
 ### Deployed ERC-4337 account
 
-`safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. It deploys the
-WDK smart account there without a bundler and signs before and after
-deployment. It then uses the deployed account through the module against the
-DFX **sandbox** (`buy`, `sell` and session checks). It needs `anvil` on `PATH`;
+`safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. Before
+deployment it signs with the WDK smart account and calls `buy`. The posted
+signature must be an ERC-6492 wrapper: `factory` and `factoryData` match the
+counterfactual account from `account._getSmartAccount()`, and the inner Safe
+signature recovers to the owner. viem 2.38.5, the version the DFX API uses,
+verifies that wrapper on the fork. The Safe still has no code afterwards. The
+script then deploys the account without a bundler and signs again. The
+post-deployment `buy` and `sell` signatures are checked byte-for-byte against
+the pre-deployment `buy` wrapper. The forked contract accepts the inner
+signature through ERC-1271 (`0x1626ba7e`), and viem accepts the wrapped
+signature. Each sign-in records `sandbox` as `rejected` or `accepted`.
+Wallet packages can include their own `@tetherto/wdk-wallet` copy; the probe's
+initial resolution check compares only the copies used by DFX and WDK.
+`rejected` is a `ProviderError` with reason `UNAUTHORIZED`. `accepted` is a
+widget URL that contains a session. The sandbox can accept a Safe that is not
+deployed on the fork once the DFX API verifies ERC-6492 on Polygon. It needs
+`anvil` on `PATH`;
 `ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
 and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
 are accepted. Set the variable in the process environment; the probe does not

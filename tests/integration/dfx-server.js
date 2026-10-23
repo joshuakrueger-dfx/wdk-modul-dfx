@@ -40,9 +40,9 @@ export async function startServer () {
   const tokens = new Set()
   const registeredAddresses = new Set()
   const events = []
+  const authBodies = []
   let faults = {}
   let logins = 0
-  let challengeCount = 0
   const server = createServer(async (request, response) => {
     const send = (status, raw) => {
       response.writeHead(status, { 'Content-Type': 'application/json' })
@@ -58,8 +58,8 @@ export async function startServer () {
         tokens.clear()
         if (url.searchParams.get('preserveRegistrations') !== 'true') registeredAddresses.clear()
         events.length = 0
+        authBodies.length = 0
         logins = 0
-        challengeCount = 0
         faults = JSON.parse(body || '{}')
         send(200, '{}')
         return
@@ -68,14 +68,14 @@ export async function startServer () {
         send(200, JSON.stringify(events))
         return
       }
+      if (request.method === 'GET' && url.pathname === '/__auth-bodies') {
+        send(200, JSON.stringify(authBodies))
+        return
+      }
       if (request.method === 'GET' && url.pathname === '/v1/auth/signMessage' && body === null &&
           [...url.searchParams.keys()].join() === 'address' && /^0x[0-9a-f]{40}$/i.test(url.searchParams.get('address'))) {
         const address = url.searchParams.get('address')
         events.push(`challenge:${address}`)
-        if (++challengeCount === 2 && faults.ownerChallenge) {
-          send(401, JSON.stringify({ statusCode: 401, message: 'Unauthorized', error: 'Unauthorized' }))
-          return
-        }
         const raw = responses.challenge.raw.replaceAll(ADDRESS_PLACEHOLDER, address)
         challenges.set(address.toLowerCase(), JSON.parse(raw).message)
         send(responses.challenge.status, raw)
@@ -83,6 +83,7 @@ export async function startServer () {
       }
       if (request.method === 'POST' && request.url === '/v1/auth') {
         const auth = JSON.parse(body)
+        authBodies.push(auth)
         if (!auth || Object.keys(auth).sort().join() !== 'address,blockchain,signature' || auth.blockchain !== 'Ethereum') {
           throw new Error('Unrecorded DFX auth request: expected address, signature and blockchain Ethereum')
         }

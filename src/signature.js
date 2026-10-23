@@ -64,6 +64,27 @@ function compactDer (hex) {
   return offset === bytes.length ? scalars.join('') : hex
 }
 
+const SAFE_MESSAGE_FIELDS = Object.freeze([{ name: 'message', type: 'bytes' }])
+
+/** EIP-191 digest DFX passes to ERC-1271 isValidSignature. */
+function personalMessageHash (message) {
+  const payload = utf8ToBytes(message)
+  const prefix = utf8ToBytes(`\x19Ethereum Signed Message:\n${payload.length}`)
+  return keccak256(concatBytes(prefix, payload))
+}
+
+/**
+ * Safe 1.4.1 typed data whose owner signature satisfies CompatibilityFallbackHandler.
+ * The message bytes are the personal-sign digest: abi.encode of that bytes32 is the digest itself.
+ */
+export function safeMessageTypedData (chainId, verifyingContract, message) {
+  return {
+    domain: { chainId, verifyingContract },
+    types: { SafeMessage: SAFE_MESSAGE_FIELDS },
+    message: { message: `0x${bytesToHex(personalMessageHash(message))}` }
+  }
+}
+
 /** Converts Solana hex signatures to Base58 and Spark DER hex signatures to compact hex, preserving other formats. */
 export function normalizeSignature (network, signature) {
   if (network === 'solana' && /^[0-9a-f]{128}$/i.test(signature)) return base58(signature)
