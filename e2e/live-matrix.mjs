@@ -63,7 +63,7 @@ const CASES = [
     chain: 'polygon-4337',
     Manager: WalletManagerEvmErc4337,
     cfg: { chainId: 137, provider: 'https://polygon-bor-rpc.publicnode.com', bundlerUrl: 'https://bundler.invalid', safeModulesVersion: '0.3.0', useNativeCoins: true },
-    network: 'polygon', smart: true
+    network: 'polygon'
   },
   { chain: 'tron', Manager: WalletManagerTron, cfg: { provider: 'https://api.trongrid.io' }, network: 'tron' },
   { chain: 'solana', Manager: WalletManagerSolana, cfg: { provider: 'https://api.mainnet-beta.solana.com' }, network: 'solana' },
@@ -129,23 +129,6 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
   await step(c.chain, `quoteBuy ${cur}->${code} fiatAmount 100`, () => fiat.quoteBuy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n }))
   await step(c.chain, `quoteSell ${code}->${cur} cryptoAmount 50`, () => fiat.quoteSell({ cryptoAsset: code, fiatCurrency: cur, cryptoAmount }))
 
-  if (c.smart) {
-    for (const [method, input] of [
-      ['buy', { cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n }],
-      ['sell', { cryptoAsset: code, fiatCurrency: cur, cryptoAmount }],
-      ['getTransactionDetail', 'E2E-NONEXISTENT-UID']
-    ]) {
-      await step(c.chain, `${method} -> undeployed smart account stays unsigned-in`, async () => {
-        try { await fiat[method](input) } catch (e) {
-          if (e?.constructor?.name === 'ProviderError' && e.reason === 'UNAUTHORIZED') return err(e)
-          throw e
-        }
-        throw new Error('Undeployed smart account signed in')
-      })
-    }
-    continue
-  }
-
   const tx = await step(c.chain, 'getTransactionDetail(unknown uid) -> expects NoSuchElementError after auth', async () => {
     try { return await fiat.getTransactionDetail('E2E-NONEXISTENT-UID') } catch (e) {
       if (e?.constructor?.name === 'NoSuchElementError') return 'NoSuchElementError (auth succeeded, 404 mapped)'
@@ -153,15 +136,28 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
     }
   })
 
-  const buy = await step(c.chain, `buy ${cur}->${code} fiatAmount 100`, async () => (await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n })).buyUrl)
-  const sell = await step(c.chain, `sell ${code}->${cur} cryptoAmount 50`, async () => (await fiat.sell({ cryptoAsset: code, fiatCurrency: cur, cryptoAmount })).sellUrl)
+  const buy = await step(c.chain, `buy ${cur}->${code} fiatAmount 100`, async () => {
+    const url = (await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n })).buyUrl
+    if (!url) throw new Error('buy returned no widget URL')
+    return url
+  })
+  const sell = await step(c.chain, `sell ${code}->${cur} cryptoAmount 50`, async () => {
+    const url = (await fiat.sell({ cryptoAsset: code, fiatCurrency: cur, cryptoAmount })).sellUrl
+    if (!url) throw new Error('sell returned no widget URL')
+    return url
+  })
   for (const [kind, url] of [['buy', buy], ['sell', sell]]) {
     if (!url) continue
     urls[`${c.chain}-${kind}`] = url
     await step(c.chain, `${kind}Url session valid at /v2/user`, async () => {
       const u = new URL(url)
+      const session = u.searchParams.get('session')
+      if (!session) throw new Error(`${kind} URL has no session parameter`)
+      const user = await userCheck(session, address)
+      if (user.status !== 200) throw new Error(`${kind} session returned HTTP ${user.status} at /v2/user`)
+      if (!user.addressInProfile) throw new Error(`${kind} session profile does not match the wallet address`)
       const params = Object.fromEntries([...u.searchParams].filter(([k]) => k !== 'session'))
-      return { ...(await userCheck(u.searchParams.get('session'), address)), origin: u.origin, path: u.pathname, params }
+      return { ...user, origin: u.origin, path: u.pathname, params }
     })
   }
 

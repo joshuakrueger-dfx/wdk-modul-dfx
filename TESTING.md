@@ -60,17 +60,17 @@ unless it says so.
 | Coverage (unit + integration) | `npm run test:coverage` | 746/746 tests in 3 suites on Node v26.7.0; 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected on 2026-09-30, each by 1–233 tests; not repeated on this branch. 7/7 mutations of the ERC-6492 wrapper and the challenge check detected on 2026-10-20 |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures on `20ec94d`. The script on this branch was not re-run |
-| Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 172/178 steps on `20ec94d`; the 6 failures are expected (section 2). The script on this branch was not re-run |
+| Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 165/171 steps on this branch (2026-10-23); the 6 failures are the same expected ones (section 2). Polygon ERC-4337 passes every step |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps on `20ec94d`; the 4 failures are a DFX data issue (section 2). The script on this branch was not re-run |
 | Widget as the user sees it | `cd e2e && node widget-check.mjs` | On `20ec94d`, the widget opens signed in, amount/asset/network prefilled, in sandbox and production. The script on this branch was not re-run |
-| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | Not re-run on this branch. The script expects Bitcoin to stay unlisted, the ERC-4337 journey to be rejected for an undeployed Safe before the checkout frame (true only while the DFX API does not verify ERC-6492), and the other journeys to reach the DFX page title (`Buy`/`Sell`). The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
+| Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | `eth-4337-buy-usdt` and `eth-eoa-buy-usdt` passed on this branch (2026-10-23); the other five journeys were not re-run. The script expects Bitcoin to stay unlisted and every other journey, the undeployed ERC-4337 Safe included, to reach the DFX page title (`Buy`/`Sell`), return and show an order status. The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
 | After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps on `20ec94d` (second run; the first stopped at a transient local `fetch failed`, section 12). The script on this branch was not re-run |
 | Chains without a WDK wallet | `cd e2e && node native-quotes.mjs` | Not re-run on this branch. The script expects sandbox to list only Firo, production to list none of Bitcoin, Lightning, Arkade and Firo, and unlisted assets to be rejected with Missing decimals |
 | Backend processing, first look | `cd e2e && node fullstack-processing.mjs` | On `20ec94d`, the sell deposit is matched by the real `BuyFiat` job; a +10 % counter-test is not matched. The script on this branch was not re-run |
 | Transaction lifecycle, real backend jobs | `cd e2e && node fullstack-lifecycle.mjs` | On `20ec94d`: 56 steps OK, 2 red: buy and sell reach an automatic AML `Pass`, rejection and refund reach `Returned`, the module status matches all seven DFX states observed; the crypto payout and the fiat bank execution are not prepared by the local stack (no liquidity rules). The script on this branch was not re-run |
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | On `20ec94d`: e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call. The script on this branch was not re-run |
 | Bare entry point | `cd e2e && npx --yes bare@1.34.1 bare-smoke.mjs` | 4/4 checks on this branch (2026-10-20, Bare runtime v1.35.0): `bare.js` loads `DfxProtocol`, and a sandbox sign-in on Polygon through stubbed `fetch` posts the predicted Safe address with exactly the ERC-6492 signature in `e2e/fixtures/bare-smoke-expected.json`, then the stubbed detail request answers 404. With one hex digit of that fixture changed the probe reports 3/4. No network, no DFX API |
-| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 11/11 steps on this branch (2026-10-20): before deployment the posted signature is ERC-6492-wrapped and viem 2.38.5 verifies it on the fork while the Safe has no code; after deployment the inner signature passes ERC-1271 and the wrapped one passes viem; sandbox result `rejected` in all three sign-ins (section 8) |
+| Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 11/11 steps on this branch (2026-10-20): before deployment the posted signature is ERC-6492-wrapped and viem 2.38.5 verifies it on the fork while the Safe has no code; after deployment the inner signature passes ERC-1271 and the wrapped one passes viem; sandbox result `accepted` in all three sign-ins on 2026-10-23, `rejected` on 2026-10-20 (section 8) |
 | Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; fifth pass of all skills on `498d4e6` (2026-09-30) |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
@@ -140,10 +140,10 @@ external ID before any payment.
 Chains in that run: Ethereum, Polygon, Arbitrum, Base, Optimism, BNB Smart Chain and Sepolia (`wdk-wallet-evm`); Polygon as an
 ERC-4337 smart account; Tron; Solana; Bitcoin (BIP-84); Spark.
 
-**Current script, not run live.** While the DFX API does not verify ERC-6492, an undeployed ERC-4337 account (`smart: true`) is expected to stay unsigned-in:
-`buy`, `sell` and `getTransactionDetail` throw `ProviderError` with reason `UNAUTHORIZED`, and that chain stops.
-Bitcoin with no listed asset is expected to throw `Missing decimals for Bitcoin/BTC`. Sandbox and production were
-not run for this change, so this section has no new step count.
+**Sandbox on this branch: 165/171 (2026-10-23).** The undeployed Polygon ERC-4337 account now runs the same steps
+as the other chains and passes all of them: it signs in, and the `buy()` and `sell()` sessions return 200 at `/v2/user`
+with the Safe address in the profile. With the expected address replaced by another one, those two session steps fail
+(13/15 for that chain). The 6 failures are the expected ones below. Production was not run for this change.
 
 **Sandbox: 172/178 (`20ec94d`).** The 6 failures are purchases of Sepolia USDT and Spark BTC, which the sandbox lists as
 `sellable` but not `buyable`. The module rejects them with `ValueError`, which is the intended behaviour.
@@ -305,8 +305,9 @@ message is byte-for-byte identical before and after deployment, and it recovers 
 `buy()` and `sell()` again submit the wrapped signature, byte for byte the one posted before deployment: the inner
 signature returns the ERC-1271 magic value from `isValidSignature` on the forked Safe, and viem accepts the wrapped one.
 The sandbox API cannot see the fork. On 2026-10-20 it rejected all three sign-ins as an authentication failure
-(`sandbox: rejected`, `ProviderError` with reason `UNAUTHORIZED`); the probe does not show why. If the sandbox returns a
-session, the probe reports `accepted`.
+(`sandbox: rejected`, `ProviderError` with reason `UNAUTHORIZED`). On 2026-10-23, after the DFX API began verifying
+ERC-6492, the same code got `accepted` with a session for all three: before deployment, and for `buy()` and `sell()`
+after deployment on the fork, while on Polygon itself the Safe still has no code.
 
 ## 9. Real purchase with real money (production, 2026-09-28)
 

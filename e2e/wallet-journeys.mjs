@@ -65,13 +65,13 @@ async function stopServer () {
 
 const BASE = `http://localhost:${PORT}`
 const JOURNEYS = [
-  { name: 'eth-eoa-buy-usdt', smart: false, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
+  { name: 'eth-eoa-buy-usdt', direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
   { name: 'eth-4337-buy-usdt', smart: true, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '100' },
-  { name: 'tron-buy-usdt', smart: false, direction: 'buy', asset: /USDT.*tron/i, fiat: 'CHF', amount: '100' },
-  { name: 'solana-sell-usdt', smart: false, direction: 'sell', asset: /USDT.*solana/i, fiat: 'EUR', amount: '50' },
-  { name: 'bitcoin-buy-btc', smart: false, unlisted: true, direction: 'buy', asset: /BTC.*bitcoin/i, fiat: 'EUR', amount: '100' },
-  { name: 'spark-sell-btc', smart: false, direction: 'sell', asset: /BTC.*spark/i, fiat: 'EUR', amount: '0.001', crypto: true },
-  { name: 'eth-too-low', smart: false, direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '1' }
+  { name: 'tron-buy-usdt', direction: 'buy', asset: /USDT.*tron/i, fiat: 'CHF', amount: '100' },
+  { name: 'solana-sell-usdt', direction: 'sell', asset: /USDT.*solana/i, fiat: 'EUR', amount: '50' },
+  { name: 'bitcoin-buy-btc', unlisted: true, direction: 'buy', asset: /BTC.*bitcoin/i, fiat: 'EUR', amount: '100' },
+  { name: 'spark-sell-btc', direction: 'sell', asset: /BTC.*spark/i, fiat: 'EUR', amount: '0.001', crypto: true },
+  { name: 'eth-too-low', direction: 'buy', asset: /USDT.*ethereum/i, fiat: 'EUR', amount: '1' }
 ]
 const tid = id => `[data-testid="${id}"], #${id}`
 const masked = s => String(s ?? '').replace(/((?:session|access_token|token)(?:=|%3D))[^&\s"<>#]*/gi, '$1[REDACTED]').replace(/Bearer\s+[^\s"<>]+/gi, 'Bearer [REDACTED]').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED-JWT]')
@@ -151,18 +151,6 @@ try {
           const cont = page.locator(tid('continue-dfx'))
           if (await cont.isDisabled().catch(() => true)) { out.continue = 'disabled'; throw new Error('Continue to DFX is disabled') }
           await cont.click()
-          if (j.smart) {
-            await waitForState(page, 'Undeployed smart-account sign-in error did not appear', () => {
-              const offer = document.querySelector('#offer')
-              return offer?.classList.contains('error') && offer.textContent.includes('Anmeldung bei DFX fehlgeschlagen')
-            })
-            out.rejection = clean(await page.locator(tid('offer')).innerText())
-            await shot('3-rejected')
-            out.pageErrors = errors.length
-            results.push(out)
-            console.log(JSON.stringify(out, null, 1))
-            continue
-          }
           await waitForState(page, 'DFX checkout frame did not open', () =>
             document.querySelector('#browser-sheet')?.hidden === false && document.querySelector('#browser-frame')?.getAttribute('src'))
           const frame = page.frameLocator(tid('browser-frame'))
