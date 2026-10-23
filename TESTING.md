@@ -7,7 +7,8 @@ unless it says so.
 
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
   - **This branch:** the lint, unit, integration and coverage rows, recorded in section 1, and the ERC-4337 fork probe
-    of section 8, all re-run on 2026-10-20 on Node v26.7.0.
+    of section 8, all re-run on 2026-10-20 on Node v26.7.0; on 2026-10-23 the fork probe (11/11 again), the sandbox
+    live matrix and two wallet journeys on Node v26.12.1.
   - **2026-09-30, after the fifth review pass:** the 59 mutations of the mutation-probe row of the summary. They were
     not repeated on this branch; the seven ERC-6492 and challenge mutations in that row belong to this branch (2026-10-20). That revision
     includes these library changes made after `27dd624`: one shared
@@ -32,13 +33,15 @@ unless it says so.
   - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the summary rows that name this revision,
     re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
     byte for byte with the repository before the run. Section 11 keeps the earlier run against `ec9b788`.
-    The live-matrix counts are this run. A summary row that says the script on this branch was not re-run is not this run.
+    The production live-matrix count is this run; the sandbox count comes from this branch (2026-10-23). A summary row
+    that says the script on this branch was not re-run is not this run.
   - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
     on 2026-09-29 the same production order, wallet and DFX account were re-checked with `20ec94d` without a payment
     (section 12).
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
-- **Runtime:** Historical runs used Node.js `v22.22.0`. On this branch, lint, unit, integration, coverage and the fork probe used Node v26.7.0. macOS arm64. The Bare entry point ran on the Bare runtime v1.35.0 (npm package `bare@1.34.1`), see the summary row.
+- **Runtime:** Historical runs used Node.js `v22.22.0`. On this branch, lint, unit, integration, coverage and the 2026-10-20 fork probe used Node v26.7.0; the 2026-10-23
+  runs (sandbox live matrix, two wallet journeys, fork probe) used Node v26.12.1. macOS arm64. The Bare entry point ran on the Bare runtime v1.35.0 (npm package `bare@1.34.1`), see the summary row.
 - **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.17
   (a single copy, also used by `@tetherto/wdk-wallet-evm`; 1.0.0-beta.19 before 2026-10-02)
   and `@tetherto/wdk-wallet-evm` 1.0.0-beta.19.
@@ -142,7 +145,7 @@ ERC-4337 smart account; Tron; Solana; Bitcoin (BIP-84); Spark.
 
 **Sandbox on this branch: 165/171 (2026-10-23).** The undeployed Polygon ERC-4337 account now runs the same steps
 as the other chains and passes all of them: it signs in, and the `buy()` and `sell()` sessions return 200 at `/v2/user`
-with the Safe address in the profile. With the expected address replaced by another one, those two session steps fail
+with the Safe address in the `/v2/user` response body (a substring check, not a comparison of the address field). With the expected address replaced by another one, those two session steps fail
 (13/15 for that chain). The 6 failures are the expected ones below. Production was not run for this change.
 
 **Sandbox: 172/178 (`20ec94d`).** The 6 failures are purchases of Sepolia USDT and Spark BTC, which the sandbox lists as
