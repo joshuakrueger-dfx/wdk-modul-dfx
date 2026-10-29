@@ -22,6 +22,7 @@ import WalletManagerEvmErc4337, { WalletAccountReadOnlyEvmErc4337 } from '@tethe
 
 const DEFAULT_RPC = 'http://127.0.0.1:8547'
 const DEFAULT_TOKEN = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const BASE_GAS_PRICE_ORACLE = '0x420000000000000000000000000000000000000F'
 const DEFAULT_SEED_FILE = `${homedir()}/.wdk-dfx-real/seed.txt`
 const CHAIN_ID = 8453n
 const SAFE_CONFIG = {
@@ -38,8 +39,12 @@ const ERC20_ABI = [
 const SAFE_ABI = [
   'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)'
 ]
+const GAS_PRICE_ORACLE_ABI = [
+  'function getL1FeeUpperBound(uint256 unsignedTxSize) view returns (uint256)'
+]
 const erc20Interface = new Interface(ERC20_ABI)
 const safeInterface = new Interface(SAFE_ABI)
+const gasPriceOracleInterface = new Interface(GAS_PRICE_ORACLE_ABI)
 const coder = AbiCoder.defaultAbiCoder()
 // Safe execution cannot be estimated by an RPC while the counterfactual Safe has no code.
 // This conservative allowance covers the Safe call path plus a standard ERC-20 transfer.
@@ -121,6 +126,19 @@ function maskSensitiveText (value, seed) {
 
 function asBytes32 (value) {
   return zeroPadValue(toBeHex(value), 32)
+}
+
+function withGasBuffer (estimate) {
+  return (estimate * 120n + 99n) / 100n
+}
+
+async function l1FeeUpperBound (provider, data) {
+  const unsignedTxSize = BigInt((data.length - 2) / 2 + 200)
+  const result = await provider.call({
+    to: BASE_GAS_PRICE_ORACLE,
+    data: gasPriceOracleInterface.encodeFunctionData('getL1FeeUpperBound', [unsignedTxSize])
+  })
+  return BigInt(gasPriceOracleInterface.decodeFunctionResult('getL1FeeUpperBound', result)[0])
 }
 
 async function receiptCost (provider, hash, receipt) {
@@ -214,9 +232,10 @@ async function main () {
     const maxFeePerGas = 2n * block.baseFeePerGas + priorityFeeWei
 
     let deployGas = 0n
-    let transferGas
+    let deployL1Fee = 0n
     if (!deployed) {
       deployGas = await provider.estimateGas({ from: owner, to: factory, data: factoryData, value: 0n })
+      deployL1Fee = await l1FeeUpperBound(provider, factoryData)
     }
     const transferData = options.native ? '0x' : erc20Interface.encodeFunctionData('transfer', [options.to, balance])
     const safeTransactionTarget = options.native ? options.to : options.token
@@ -225,13 +244,18 @@ async function main () {
     const execData = safeInterface.encodeFunctionData('execTransaction', [
       safeTransactionTarget, safeTransactionValue, transferData, 0, 0n, 0n, 0n, ZeroAddress, ZeroAddress, signature
     ])
+    let transferGasEstimate
     if (deployed) {
-      transferGas = await provider.estimateGas({ from: owner, to: safe, data: execData, value: 0n })
+      transferGasEstimate = await provider.estimateGas({ from: owner, to: safe, data: execData, value: 0n })
     } else {
-      transferGas = UNDEPLOYED_TRANSFER_GAS_ESTIMATE
+      transferGasEstimate = UNDEPLOYED_TRANSFER_GAS_ESTIMATE
     }
+    const transferGas = deployed ? withGasBuffer(transferGasEstimate) : transferGasEstimate
+    const transferL1Fee = await l1FeeUpperBound(provider, execData)
 
-    const estimatedGasCost = (deployGas + transferGas) * maxFeePerGas
+    const estimatedDeploymentCost = deployGas * maxFeePerGas + deployL1Fee
+    const estimatedTransferCost = transferGas * maxFeePerGas + transferL1Fee
+    const estimatedTotalCost = estimatedDeploymentCost + estimatedTransferCost
     console.log(`chainId: ${chainId}`)
     console.log(`Owner: ${owner}`)
     console.log(`Safe: ${safe}`)
@@ -245,20 +269,22 @@ async function main () {
     console.log(`Estimated transfer gas: ${deployed ? transferGas : `approximately ${transferGas} (Safe is undeployed; conservative allowance)`}`)
     console.log(`Priority fee: ${formatUnits(priorityFeeWei, 9)} gwei`)
     console.log(`Max fee per gas: ${formatUnits(maxFeePerGas, 9)} gwei`)
-    console.log(`Estimated deployment cost: ${formatEther(deployGas * maxFeePerGas)} ETH`)
-    console.log(`Estimated transfer cost: ${formatEther(transferGas * maxFeePerGas)} ETH`)
-    console.log(`Estimated total cost: ${formatEther(estimatedGasCost)} ETH`)
+    console.log(`Deployment L1 fee upper bound: ${formatEther(deployL1Fee)} ETH`)
+    console.log(`Transfer L1 fee upper bound: ${formatEther(transferL1Fee)} ETH`)
+    console.log(`Estimated deployment cost: ${formatEther(estimatedDeploymentCost)} ETH`)
+    console.log(`Estimated transfer cost: ${formatEther(estimatedTransferCost)} ETH`)
+    console.log(`Estimated total cost: ${formatEther(estimatedTotalCost)} ETH`)
 
     if (!options.send) {
       console.log('Dry run only; no transaction was sent.')
       return
     }
-    if (!options.local && options.confirm?.toLowerCase() !== safe.toLowerCase()) {
-      throw new Error('For a non-local RPC, --send requires --confirm with the exact Safe address')
+    if (options.confirm?.toLowerCase() !== safe.toLowerCase()) {
+      throw new Error('--send requires --confirm with the exact Safe address')
     }
-    const preflightLimit = 2n * estimatedGasCost
+    const preflightLimit = 2n * estimatedTotalCost
     if (ownerEthBefore < preflightLimit) {
-      throw new Error(`Owner ETH balance ${formatEther(ownerEthBefore)} is below the buffered maximum cost ${formatEther(preflightLimit)}`)
+      throw new Error(`Owner ETH balance ${formatEther(ownerEthBefore)} is below the buffered preflight estimate ${formatEther(preflightLimit)}`)
     }
 
     let deploymentHash
@@ -295,11 +321,23 @@ async function main () {
     const sendExecData = safeInterface.encodeFunctionData('execTransaction', [
       sendTarget, sendValue, sendTransferData, 0, 0n, 0n, 0n, ZeroAddress, ZeroAddress, signature
     ])
+    const exactTransferGasEstimate = await provider.estimateGas({ from: owner, to: safe, data: sendExecData, value: 0n })
+    const transferGasLimit = withGasBuffer(exactTransferGasEstimate)
+    const currentOwnerBalance = await provider.getBalance(owner)
+    const transferEstimatedCost = transferGasLimit * maxFeePerGas + transferL1Fee
+    const transferPreflightLimit = 2n * transferEstimatedCost
+    if (currentOwnerBalance < transferPreflightLimit) {
+      throw new Error(`Insufficient owner ETH after Safe deployment for transfer; no transfer was sent and the Safe asset balance remains unchanged. Available ${formatEther(currentOwnerBalance)}, required ${formatEther(transferPreflightLimit)}`)
+    }
+    console.log(`Pre-transfer gas estimate: ${exactTransferGasEstimate}; gas limit with 20% buffer: ${transferGasLimit}`)
+    console.log(`Pre-transfer L1 fee upper bound: ${formatEther(transferL1Fee)} ETH`)
+    console.log(`Pre-transfer estimated cost: ${formatEther(transferEstimatedCost)} ETH`)
     const transferNonce = await provider.getTransactionCount(owner, 'pending')
     const transferSent = await ownerAccount.sendTransaction({
       to: safe,
       data: sendExecData,
       value: 0n,
+      gasLimit: transferGasLimit,
       nonce: transferNonce,
       type: 2,
       maxFeePerGas,
@@ -323,7 +361,7 @@ async function main () {
     const transferCost = await receiptCost(provider, transferSent.hash, transferReceipt)
     const actualGasCost = deploymentCost.total + transferCost.total
     const ownerEthSpent = ownerEthBefore - ownerEthAfter
-    const maximumExpectedCost = estimatedGasCost + actualGasCost
+    const maximumExpectedCost = estimatedTotalCost + actualGasCost
     if (ownerEthSpent < actualGasCost || ownerEthSpent > maximumExpectedCost) {
       throw new Error(`Owner ETH spent ${formatEther(ownerEthSpent)}; expected between receipt cost ${formatEther(actualGasCost)} and ${formatEther(maximumExpectedCost)}`)
     }

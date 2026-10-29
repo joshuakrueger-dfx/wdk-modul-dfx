@@ -67,7 +67,7 @@ unless it says so.
 | Coverage (unit + integration) | `npm run test:coverage` | 746/746 tests in 3 suites on Node v26.7.0 and again on Node v22.23.4 (2026-10-29); 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected on 2026-09-30, each by 1–233 tests; not repeated on this branch. 7/7 mutations of the ERC-6492 wrapper and the challenge check detected on 2026-10-20 |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures on `20ec94d`. The script on this branch was not re-run |
-| Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 180/186 steps on this branch (2026-10-29, with the Base ERC-4337 case); the 6 failures are the same expected ones (section 2). Polygon and Base ERC-4337 pass every step |
+| Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 178/186 steps on this branch (2026-10-29, with the Base ERC-4337 case); all 8 failures come from the two assets the sandbox does not list as buyable (section 2). Polygon and Base ERC-4337 pass every step |
 | Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps on `20ec94d`; the 4 failures are a DFX data issue (section 2). The script on this branch was not re-run |
 | Widget as the user sees it | `cd e2e && node widget-check.mjs` | On `20ec94d`, the widget opens signed in, amount/asset/network prefilled, in sandbox and production. The script on this branch was not re-run |
 | Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | `eth-4337-buy-usdt` and `eth-eoa-buy-usdt` passed on this branch (2026-10-23); the other five journeys were not re-run. The script expects Bitcoin to stay unlisted and every other journey, the undeployed ERC-4337 Safe included, to reach the DFX page title (`Buy`/`Sell`), return and show an order status. The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
@@ -152,8 +152,14 @@ external ID before any payment.
 Chains in that run: Ethereum, Polygon, Arbitrum, Base, Optimism, BNB Smart Chain and Sepolia (`wdk-wallet-evm`); Polygon as an
 ERC-4337 smart account; Tron; Solana; Bitcoin (BIP-84); Spark.
 
-**Sandbox on this branch: 180/186 (2026-10-29, Node v26.12.1).** This run includes the Base ERC-4337 account
-(`base-4337`), which passes all 15 of its steps; the 6 failures are the expected ones below.
+**Sandbox on this branch: 178/186 (2026-10-29, Node v26.12.1).** This run includes the Base ERC-4337 account
+(`base-4337`), which passes all 15 of its steps. The two contract steps now fail on any unexpected result: the
+foreign-recipient step accepts only the module's `ValueError` `recipient must match the account address`, and the
+read-only step only `AccountRequiredError`; before, both returned any outcome as a pass. With the expected message, or
+the expected class, replaced, `base-4337` drops to 14/15. The 8 failures are the 6 expected ones below plus the
+foreign-recipient step on Sepolia and Spark: the module checks that the asset is buyable before it checks the
+recipient, so on those two chains the recipient check is not reached. A run of the same commit before the two steps
+were tightened counted 180/186.
 
 **Sandbox on this branch: 165/171 (2026-10-23), before `base-4337` was added.** The undeployed Polygon ERC-4337 account now runs the same steps
 as the other chains and passes all of them: it signs in, and the `buy()` and `sell()` sessions return 200 at `/v2/user`
@@ -529,7 +535,8 @@ EIP-712 signature for that address. It does not sign in as the recovered owner.
 Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
 catalog and rejected by trade methods while their API rows carry `decimals: null`;
 sandbox Firo/FIRO remains listed with API `decimals: 8`. In the production catalog recorded on 2026-10-02 (`b5cafa1`), production
-returned null for all four. Production was not fetched again on this branch. An API value, including zero, remains authoritative.
+returned null for all four, and a fetch of `/v1/asset` on 2026-10-29 still returned null for all four. An API value,
+including zero, remains authoritative.
 
 ## 14. Real purchase into an undeployed ERC-4337 account (production, 2026-10-29)
 
@@ -565,8 +572,12 @@ data WDK predicts, then call `execTransaction` with a pre-validated owner signat
 sequence ran on `anvil` forks of Base while the account was still undeployed: once with 20 USDC set into the account
 by storage write (2026-10-26) and once with its real 0.00565071 ETH (2026-10-29); both exited 0 with the account at 0
 and the destination credited in full. After the real deployment, the USDC path passed again on a fork of the deployed
-account (exit 0). On Base itself, with the script as of `9591a53` (before the seed-file and empty-account checks
-were added), the owner held 0.00005 ETH for gas:
+account (exit 0). On Base itself, with the script as of `9591a53` (before the seed-file, empty-account,
+confirmation and gas re-check changes that followed), the owner held 0.00005 ETH for gas. The current script was
+run afterwards on a fork of Base at block 53239900, between payout and deployment, with the owner's balance set to
+the 0.00005 ETH it held later (at that block it held 0.000000155 ETH, and the script stopped before any transaction):
+without `--confirm` it refused; with it, it deployed the account and moved the full 0.00565071 ETH out, exit 0.
+The transactions on Base:
 
 | Time (UTC) | Base block | Transaction | Result |
 | --- | --- | --- | --- |

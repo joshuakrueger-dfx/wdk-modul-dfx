@@ -168,12 +168,24 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
   }
 
   // Contract checks as an integrator would hit them.
-  await step(c.chain, 'buy with foreign recipient -> ValueError', async () => {
-    try { await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n, recipient: 'foreign-address' }); return 'NOT REJECTED' } catch (e) { return err(e) }
+  await step(c.chain, 'buy with foreign recipient -> recipient mismatch ValueError', async () => {
+    try {
+      await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n, recipient: 'foreign-address' })
+      throw new Error('NOT REJECTED')
+    } catch (e) {
+      if (e?.constructor?.name === 'ValueError' && e.message === 'recipient must match the account address') return err(e)
+      throw e
+    }
   })
   await step(c.chain, 'buy with read-only account -> AccountRequiredError', async () => {
     const ro = new DfxProtocol(await account.toReadOnlyAccount(), { environment: ENV, network: c.network })
-    try { await ro.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n }); return 'NOT REJECTED' } catch (e) { return err(e) }
+    try {
+      await ro.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n })
+      throw new Error('NOT REJECTED')
+    } catch (e) {
+      if (e?.constructor?.name === 'AccountRequiredError') return err(e)
+      throw e
+    }
   })
   const ext = `e2e-${c.chain}-${Date.now()}`
   await step(c.chain, 'buy with externalTransactionId -> URL param', async () => {

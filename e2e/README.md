@@ -408,24 +408,28 @@ owned by the current user, owner-only permissions, not a symlink.
 - Without `--send` it is a dry run: addresses, balances, gas and cost estimates.
 - `--native` moves ETH; otherwise it moves the token given by `--token`
   (default: Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`).
-- `--rpc` defaults to `http://127.0.0.1:8547`, an `anvil` fork of Base. On any
-  other host, `--send` also needs `--confirm` with the exact smart-account
-  address.
+- `--rpc` defaults to `http://127.0.0.1:8547`, an `anvil` fork of Base.
+  `--send` always needs `--confirm` with the exact smart-account address, on a
+  fork as well: a local node or a tunnel to Base also answers on `localhost`.
 - `--fork-fund <amount>` works only on a local RPC. It sets the account's USDC
   balance by storage write, or its ETH balance with `--native`.
 - `--priority-fee-gwei` overrides the RPC's priority fee. `anvil` suggests
   1 gwei, while Base suggests far less.
 - It stops before any transaction, including the deployment, if the account
   holds none of the selected asset, or if the owner holds less than twice the
-  estimated maximum cost. After sending, it checks that the account is empty and the
-  destination received the full balance. It also checks that the owner paid at
-  least the receipt costs, including any reported L1 data fee.
+  estimated cost. The estimate includes the L1 data fee upper bound from Base's
+  gas price oracle. After the deployment it estimates the transfer again and
+  re-checks the owner's balance before sending it.
+- After sending, it checks that the account is empty and the destination
+  received the full balance. It also checks that the owner paid at least the
+  receipt costs, including any reported L1 data fee.
 
 This moves real funds when `--rpc` points to Base itself.
 
 ```sh
 anvil --fork-url https://base-rpc.publicnode.com --port 8547
-node safe-rescue.mjs --native --to <address> --priority-fee-gwei 0.001 --send
+node safe-rescue.mjs --native --to <address> --priority-fee-gwei 0.001 \
+  --send --confirm <smart-account address>
 # Base itself, after a dry run without --send:
 node safe-rescue.mjs --native --rpc https://base-rpc.publicnode.com --to <address> \
   --send --confirm <smart-account address>

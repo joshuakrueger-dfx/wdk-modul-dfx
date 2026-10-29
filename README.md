@@ -175,7 +175,7 @@ metadata, not only EVM chains.
 Assets without API `decimals` are excluded from supported lists and cannot be
 quoted or traded. In the recorded sandbox catalog this includes Bitcoin/BTC,
 Lightning/BTC and Arkade/BTC; Firo/FIRO has API `decimals: 8`. The production
-API returned `decimals: null` for all four in the production catalog recorded on 2026-10-02 (`b5cafa1`). Production was not fetched again on this branch. An API value is authoritative,
+API returned `decimals: null` for all four in the production catalog recorded on 2026-10-02 (`b5cafa1`) and again on 2026-10-29. An API value is authoritative,
 including zero.
 
 A ticker can occur on multiple networks. Without a network, ambiguous tickers
@@ -370,7 +370,7 @@ same fallback.
 - Bitcoin authentication is sandbox-verified. Bitcoin/BTC, Lightning/BTC and
   Arkade/BTC remain excluded from the recorded sandbox catalog until the API
   supplies `decimals`; sandbox Firo/FIRO supplies `8`. In the production catalog recorded on 2026-10-02 (`b5cafa1`), production
-  returned `decimals: null` for all four. Production was not fetched again on this branch.
+  returned `decimals: null` for all four, and again on 2026-10-29.
 - Ambiguous tickers without a network are rejected.
 - HTTP 429 and account-state failures provisionally map to `INTERNAL_SERVER_ERROR`.
 - A `recipient` or `refundAddress` differing from the account address is rejected.
