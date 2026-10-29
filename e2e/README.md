@@ -425,7 +425,10 @@ owned by the current user, owner-only permissions, not a symlink.
   received the full balance. It also checks that the owner paid at least the
   receipt costs, including any reported L1 data fee.
 
-This moves real funds when `--rpc` points to Base itself.
+This moves real funds when `--rpc` points to Base itself. `--confirm` names the
+account the funds leave, not the destination: like any wallet send, `--to` is
+the operator's choice, so check it in the dry run first. Destinations with code
+are allowed on purpose; an EIP-7702 account, for example, has code.
 
 ```sh
 anvil --fork-url https://base-rpc.publicnode.com --port 8547

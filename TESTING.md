@@ -1,7 +1,9 @@
 # Testing
 
 This document records how `@dfx.swiss/wdk-protocol-fiat-dfx` was verified, what each test layer proves, and what it
-does not prove. Every result below was produced by running the named command. A row that says the script was not
+does not prove. Every result below was produced by running the named command, except the steps a person carried out
+by hand in the two real purchases (the DFX widget steps and the bank transfer in sections 9 and 14), which those
+sections name as such. A row that says the script was not
 re-run states what that script expects, not a measured result. Nothing is inferred from reading code
 unless it says so.
 
