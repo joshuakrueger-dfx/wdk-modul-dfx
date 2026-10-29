@@ -1,5 +1,5 @@
 {
-  "source": "Computed independently from fixtures/sandbox.json (Python, not the module): tradable = buyable or sellable; decimals from the API, else 8 for Bitcoin/BTC, Lightning/BTC, Arkade/BTC, Firo/FIRO, else omitted; fiat minor units per ISO 4217 (EUR 2, AED 2, CHF 2).",
+  "source": "Computed independently from fixtures/sandbox.json (Python, not the module): tradable = buyable or sellable; assets without API decimals omitted; fiat minor units per ISO 4217 (EUR 2, AED 2, CHF 2).",
   "assets": [
     {
       "code": "XPL",
@@ -248,12 +248,6 @@
       "name": "Bitcoin"
     },
     {
-      "code": "BTC",
-      "networkCode": "arkade",
-      "decimals": 8,
-      "name": "Arkade"
-    },
-    {
       "code": "ckBTC",
       "networkCode": "internetcomputer",
       "decimals": 8,
@@ -464,12 +458,6 @@
       "name": "Basic Attention"
     },
     {
-      "code": "BTC",
-      "networkCode": "lightning",
-      "decimals": 8,
-      "name": "Lightning"
-    },
-    {
       "code": "WBTC",
       "networkCode": "optimism",
       "decimals": 8,
@@ -510,12 +498,6 @@
       "networkCode": "binancesmartchain",
       "decimals": 18,
       "name": "The Sandbox"
-    },
-    {
-      "code": "BTC",
-      "networkCode": "bitcoin",
-      "decimals": 8,
-      "name": "Bitcoin"
     },
     {
       "code": "USDT",

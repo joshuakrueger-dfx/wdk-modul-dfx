@@ -65,6 +65,12 @@ const CASES = [
     cfg: { chainId: 137, provider: 'https://polygon-bor-rpc.publicnode.com', bundlerUrl: 'https://bundler.invalid', safeModulesVersion: '0.3.0', useNativeCoins: true },
     network: 'polygon'
   },
+  {
+    chain: 'base-4337',
+    Manager: WalletManagerEvmErc4337,
+    cfg: { chainId: 8453, provider: 'https://base-rpc.publicnode.com', bundlerUrl: 'https://bundler.invalid', safeModulesVersion: '0.3.0', useNativeCoins: true },
+    network: 'base'
+  },
   { chain: 'tron', Manager: WalletManagerTron, cfg: { provider: 'https://api.trongrid.io' }, network: 'tron' },
   { chain: 'solana', Manager: WalletManagerSolana, cfg: { provider: 'https://api.mainnet-beta.solana.com' }, network: 'solana' },
   { chain: 'bitcoin', Manager: WalletManagerBtc, cfg: { network: 'bitcoin', bip: 84 }, network: 'bitcoin' },
@@ -93,10 +99,36 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
   await step(c.chain, 'getSupportedCountries (bank allowed)', async () => (await fiat.getSupportedCountries()).filter(x => x.isBuyAllowed).length)
 
   // Pick an asset on this network; prefer stablecoins.
+  if (assets === undefined) {
+    await step(c.chain, 'select listed asset', async () => { throw new Error('Asset catalog request failed') })
+    continue
+  }
   const codes = (assets ?? []).map(s => s.split('/')[0])
-  const code = ['USDT', 'USDC', 'EURC', 'ZCHF', 'ETH', 'POL', 'SOL', 'TRX', 'BTC', 'BNB'].find(x => codes.includes(x)) ?? codes[0] ?? 'BTC'
   const cur = fiats?.includes('EUR') ? 'EUR' : 'CHF'
-  const dec = Number((assets ?? []).find(s => s.startsWith(code + '/'))?.split('/')[1] ?? 8)
+  if (!codes.length && c.chain === 'bitcoin') {
+    for (const [method, input] of [
+      ['quoteBuy', { cryptoAsset: 'BTC', fiatCurrency: cur, fiatAmount: 10000n }],
+      ['buy', { cryptoAsset: 'BTC', fiatCurrency: cur, fiatAmount: 10000n }],
+      ['quoteSell', { cryptoAsset: 'BTC', fiatCurrency: cur, cryptoAmount: 100000000n }],
+      ['sell', { cryptoAsset: 'BTC', fiatCurrency: cur, cryptoAmount: 100000000n }]
+    ]) {
+      await step(c.chain, `${method} -> missing decimals ValueError`, async () => {
+        try { await fiat[method](input) } catch (e) {
+          if (e?.constructor?.name === 'ValueError' && e.message === 'Missing decimals for Bitcoin/BTC') return err(e)
+          throw e
+        }
+        throw new Error('Bitcoin without API decimals was not rejected')
+      })
+    }
+    continue
+  }
+  const code = ['USDT', 'USDC', 'EURC', 'ZCHF', 'ETH', 'POL', 'SOL', 'TRX', 'BTC', 'BNB'].find(x => codes.includes(x)) ?? codes[0]
+  const selectedAsset = (assets ?? []).find(s => s.startsWith(code + '/'))
+  if (!selectedAsset) {
+    await step(c.chain, 'select listed asset', async () => { throw new Error('No listed asset with decimals') })
+    continue
+  }
+  const dec = Number(selectedAsset.split('/')[1])
   const cryptoAmount = 50n * 10n ** BigInt(dec) // 50 units
   log(`  -- pair ${code}/${cur}, crypto decimals ${dec}`)
 
@@ -110,25 +142,50 @@ for (const c of CASES.filter(c => !only || c.chain === only)) {
     }
   })
 
-  const buy = await step(c.chain, `buy ${cur}->${code} fiatAmount 100`, async () => (await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n })).buyUrl)
-  const sell = await step(c.chain, `sell ${code}->${cur} cryptoAmount 50`, async () => (await fiat.sell({ cryptoAsset: code, fiatCurrency: cur, cryptoAmount })).sellUrl)
+  const buy = await step(c.chain, `buy ${cur}->${code} fiatAmount 100`, async () => {
+    const url = (await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n })).buyUrl
+    if (!url) throw new Error('buy returned no widget URL')
+    return url
+  })
+  const sell = await step(c.chain, `sell ${code}->${cur} cryptoAmount 50`, async () => {
+    const url = (await fiat.sell({ cryptoAsset: code, fiatCurrency: cur, cryptoAmount })).sellUrl
+    if (!url) throw new Error('sell returned no widget URL')
+    return url
+  })
   for (const [kind, url] of [['buy', buy], ['sell', sell]]) {
     if (!url) continue
     urls[`${c.chain}-${kind}`] = url
     await step(c.chain, `${kind}Url session valid at /v2/user`, async () => {
       const u = new URL(url)
+      const session = u.searchParams.get('session')
+      if (!session) throw new Error(`${kind} URL has no session parameter`)
+      const user = await userCheck(session, address)
+      if (user.status !== 200) throw new Error(`${kind} session returned HTTP ${user.status} at /v2/user`)
+      if (!user.addressInProfile) throw new Error(`${kind} session profile does not match the wallet address`)
       const params = Object.fromEntries([...u.searchParams].filter(([k]) => k !== 'session'))
-      return { ...(await userCheck(u.searchParams.get('session'), address)), origin: u.origin, path: u.pathname, params }
+      return { ...user, origin: u.origin, path: u.pathname, params }
     })
   }
 
   // Contract checks as an integrator would hit them.
-  await step(c.chain, 'buy with foreign recipient -> ValueError', async () => {
-    try { await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n, recipient: 'foreign-address' }); return 'NOT REJECTED' } catch (e) { return err(e) }
+  await step(c.chain, 'buy with foreign recipient -> recipient mismatch ValueError', async () => {
+    try {
+      await fiat.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n, recipient: 'foreign-address' })
+      throw new Error('NOT REJECTED')
+    } catch (e) {
+      if (e?.constructor?.name === 'ValueError' && e.message === 'recipient must match the account address') return err(e)
+      throw e
+    }
   })
   await step(c.chain, 'buy with read-only account -> AccountRequiredError', async () => {
     const ro = new DfxProtocol(await account.toReadOnlyAccount(), { environment: ENV, network: c.network })
-    try { await ro.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n }); return 'NOT REJECTED' } catch (e) { return err(e) }
+    try {
+      await ro.buy({ cryptoAsset: code, fiatCurrency: cur, fiatAmount: 10000n })
+      throw new Error('NOT REJECTED')
+    } catch (e) {
+      if (e?.constructor?.name === 'AccountRequiredError') return err(e)
+      throw e
+    }
   })
   const ext = `e2e-${c.chain}-${Date.now()}`
   await step(c.chain, 'buy with externalTransactionId -> URL param', async () => {

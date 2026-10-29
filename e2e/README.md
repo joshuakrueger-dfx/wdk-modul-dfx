@@ -39,6 +39,19 @@ signature differential needs no network after installation. Wallet journeys need
 loopback port 4748 free (override with `WALLET_SIM_PORT`); they start and stop their own simulator for every journey.
 Do not start a separate simulator at the same time.
 
+## Bare entry point
+
+From `e2e/`, run the stubbed smoke probe with:
+
+```sh
+npx --yes bare@1.34.1 bare-smoke.mjs
+```
+
+It imports the package's `bare.js` entry point, performs a stubbed sandbox sign-in,
+and checks the submitted Safe address and ERC-6492-wrapped signature. It does not
+connect to a network or authenticate with a real DFX API. The expected wrapper
+and its derivation details are in `fixtures/bare-smoke-expected.json`.
+
 ## Side effects and output
 
 The live matrix creates fresh wallets and DFX users through authentication, both
@@ -63,7 +76,8 @@ account/payment information; treat output as local test data. Filenames are reus
 on subsequent runs, except for the full-stack screenshots with unique run IDs.
 
 These are the original exploratory probes, not a uniform assertion suite. The
-matrix records failed steps but exits zero; native quotes report `ERR` inline;
+matrix records failed steps but exits zero; native quotes exit nonzero on an
+unexpected listing or rejection;
 the differential prints mismatch counts. Inspect these probes' output, not just
 exit codes. The journey runner exits nonzero if a journey records a `stop` or
 page errors. In sandbox, `eth-too-low` is an ordinary flow because 1 EUR is
@@ -142,7 +156,10 @@ permissions (no group or other access), e.g. `0600`. Reading rejects symlinks.
 
 ### Native-chain quotes
 
-Lightning, Arkade and Firo, without wallet authentication:
+Verifies the listing of Bitcoin, Lightning, Arkade and Firo: in sandbox only
+Firo is expected to be listed, with `DFX_ENV=production` none of the four. For
+every unlisted asset, both quote methods must reject with `ValueError`
+`Missing decimals for <blockchain>/<asset>`:
 
 ```sh
 node native-quotes.mjs > out/native-quotes-sandbox.log 2>&1
@@ -163,6 +180,10 @@ node signature-diff.mjs > out/signature-diff.log 2>&1
 
 Runs all seven journeys, or one by name. Each journey gets a fresh server process
 and wallet state, with a 600-second browser-page timeout (ten times the state timeout).
+The ERC-4337 journey signs in with an undeployed Safe and follows the checkout,
+return and order-status flow used by the EOA journeys. The Bitcoin journey checks
+that BTC is not offered for selection; it fails if the catalog request fails or
+offers no usable asset and fiat combination for the prepared wallet.
 On ordinary completion or failure, cleanup sends SIGTERM, then SIGKILL after
 5 seconds if needed. If the server still has not exited after another 5 seconds,
 the runner reports its PID and sets a nonzero exit code; the remaining journeys still run.
@@ -212,7 +233,14 @@ production also refreshes every 30 seconds while the page is open. Failed or
 unavailable reads display “–”; Bitcoin and Spark have no configured public RPC
 and are not queried. Native balances follow the configured chain RPCs even in
 DFX sandbox mode. Smart-account balances belong to the displayed smart-account
-address, while DFX purchases use its owner address as noted in the simulator.
+address. Authenticated DFX methods sign in as that address. On a known chain id,
+when the recovered signer differs and the account implements `signTypedData`,
+the module sends a Safe EIP-712 signature. The module wraps Safe signatures only
+on networks in `ERC6492_NETWORKS` (Ethereum, Sepolia, BNB Smart Chain, Optimism,
+Arbitrum, Polygon, Base, Gnosis and Plasma), for which the DFX API is intended to verify
+ERC-6492; an API without ERC-6492 support rejects an undeployed Safe and a
+wrapped signature from a deployed Safe. Wrapping also requires that the owner
+predicts the account with the WDK Safe 0.3.0 parameters.
 
 If `WALLET_SIM_ORDERS_FILE` is set, its parent directory must already exist.
 Orders are saved atomically with permissions `0600` and loaded at startup.
@@ -329,10 +357,23 @@ node kyc-widget.mjs > out/kyc-widget.log 2>&1
 
 ### Deployed ERC-4337 account
 
-`safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. It deploys the
-WDK smart account there without a bundler and signs before and after
-deployment. It then uses the deployed account through the module against the
-DFX **sandbox** (`buy`, `sell` and session checks). It needs `anvil` on `PATH`;
+`safe-deployed.mjs` starts `anvil` (Foundry) as a Polygon fork. Before
+deployment it signs with the WDK smart account and calls `buy`. The posted
+signature must be an ERC-6492 wrapper: `factory` and `factoryData` match the
+counterfactual account from `account._getSmartAccount()`, and the inner Safe
+signature recovers to the owner. viem 2.38.5, the version the DFX API uses,
+verifies that wrapper on the fork. The Safe still has no code afterwards. The
+script then deploys the account without a bundler and signs again. The
+post-deployment `buy` and `sell` signatures are checked byte-for-byte against
+the pre-deployment `buy` wrapper. The forked contract accepts the inner
+signature through ERC-1271 (`0x1626ba7e`), and viem accepts the wrapped
+signature. Each sign-in records `sandbox` as `rejected` or `accepted`.
+Wallet packages can include their own `@tetherto/wdk-wallet` copy; the probe's
+initial resolution check compares only the copies used by DFX and WDK.
+`rejected` is a `ProviderError` with reason `UNAUTHORIZED`. `accepted` is a
+widget URL that contains a session. The sandbox accepts a Safe that is not
+deployed on the fork, because the DFX API verifies ERC-6492 since 2026-10-23. It needs
+`anvil` on `PATH`;
 `ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
 and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
 are accepted. Set the variable in the process environment; the probe does not
@@ -345,4 +386,55 @@ process list. Use an endpoint without a key or a dedicated key only for this pro
 node safe-deployed.mjs > out/safe-deployed.log 2>&1
 # Alternative upstream if the default RPC is overloaded:
 ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs > out/safe-deployed.log 2>&1
+```
+
+### Moving funds out of an undeployed ERC-4337 account
+
+The wallet simulator does not send, and its ERC-4337 accounts have no bundler.
+`safe-rescue.mjs` lets the owner move the whole balance of the Base smart account
+of the prepared wallet (account 0, chain id 8453) to another address. The owner
+deploys the account through the Safe proxy factory with the factory data WDK
+predicts, if it has no code yet, and then calls `execTransaction` on it with a
+pre-validated owner signature. The owner pays the gas with ordinary
+transactions; the smart account pays nothing.
+
+Before any transaction, the script checks the chain id, that the WDK account
+address equals the address predicted from WDK's own Safe parameters, and that
+`--to` is neither the account, its owner nor the zero address, and for a token
+not the token contract. It reads the seed from
+`WALLET_SIM_SEED_FILE` or `~/.wdk-dfx-real/seed.txt` and never prints it. The
+seed file must meet the same rule as for the simulator: a nonempty regular file,
+owned by the current user, owner-only permissions, not a symlink.
+
+- Without `--send` it is a dry run: addresses, balances, gas and cost estimates.
+- `--native` moves ETH; otherwise it moves the token given by `--token`
+  (default: Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`).
+- `--rpc` defaults to `http://127.0.0.1:8547`, an `anvil` fork of Base.
+  `--send` always needs `--confirm` with the exact smart-account address, on a
+  fork as well: a local node or a tunnel to Base also answers on `localhost`.
+- `--fork-fund <amount>` works only on a local RPC. It sets the account's USDC
+  balance by storage write, or its ETH balance with `--native`.
+- `--priority-fee-gwei` overrides the RPC's priority fee. `anvil` suggests
+  1 gwei, while Base suggests far less.
+- It stops before any transaction, including the deployment, if the account
+  holds none of the selected asset, or if the owner holds less than twice the
+  estimated cost. The estimate includes the L1 data fee upper bound from Base's
+  gas price oracle. After the deployment it estimates the transfer again and
+  re-checks the owner's balance before sending it.
+- After sending, it checks that the account is empty and the destination
+  received the full balance. It also checks that the owner paid at least the
+  receipt costs, including any reported L1 data fee.
+
+This moves real funds when `--rpc` points to Base itself. `--confirm` names the
+account the funds leave, not the destination: like any wallet send, `--to` is
+the operator's choice, so check it in the dry run first. Destinations with code
+are allowed on purpose; an EIP-7702 account, for example, has code.
+
+```sh
+anvil --fork-url https://base-rpc.publicnode.com --port 8547
+node safe-rescue.mjs --native --to <address> --priority-fee-gwei 0.001 \
+  --send --confirm <smart-account address>
+# Base itself, after a dry run without --send:
+node safe-rescue.mjs --native --rpc https://base-rpc.publicnode.com --to <address> \
+  --send --confirm <smart-account address>
 ```

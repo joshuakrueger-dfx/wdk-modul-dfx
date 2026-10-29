@@ -175,20 +175,60 @@ export const FIAT_DECIMALS = Object.freeze({
   ZWG: 2
 })
 
-// Protocol constants: 1 BTC = 10⁸ sat, as used in DFX's own wallets;
-// FIRO likewise uses 10⁸ base units. API decimals always take precedence.
-// Match the decimal strings returned by parseNumbers for API numeric fields.
-export const NATIVE_DECIMALS = Object.freeze({
-  'Bitcoin/BTC': '8',
-  'Lightning/BTC': '8',
-  'Arkade/BTC': '8',
-  'Firo/FIRO': '8'
-})
-
 export const EVM_BLOCKCHAINS = new Set([
   'ethereum', 'sepolia', 'binancesmartchain', 'optimism', 'arbitrum', 'polygon',
   'base', 'haqq', 'gnosis', 'plasma', 'citrea', 'citreatestnet'
 ])
+
+// WDK Safe 0.3.0 init code, without onChainIdentifierParams.
+// Source: @tetherto/wdk-wallet-evm-erc-4337 1.0.0-beta.20,
+// src/wallet-account-read-only-evm-erc-4337.js SALT_NONCE, SAFE_MODULES_MAP['0.3.0']
+// and _getInitCodeOverrides. ENTRYPOINT_V7 in that file is the abstractionkit 0.4.0
+// constant copied below. A wallet onChainIdentifier, or another abstractionkit
+// build, predicts a different Safe and must not be wrapped.
+export const SAFE_V0_3_0_INIT_OVERRIDES = Object.freeze({
+  c2Nonce: BigInt('0x69b348339eea4ed93f9d11931c3b894c8f9d8c7663a053024b11cb7eb4e5a1f6'),
+  entrypointAddress: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
+  safe4337ModuleAddress: '0x75cf11467937ce3F2f357CE24ffc3DBF8fD5c226',
+  safeModuleSetupAddress: '0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47'
+})
+
+// DFX API sign-in message: production has no prefix, sandbox prefixes `[dev]_`.
+// The address is appended exactly as sent in ?address=. The prefix split matches
+// DfxClient's API host and the widget app host.
+export const SIGN_IN_CHALLENGE_PREFIX = Object.freeze({
+  production: '',
+  sandbox: '[dev]_'
+})
+
+export const SIGN_IN_CHALLENGE = 'By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address._Your_ID:_'
+
+// The module wraps a Safe signature only when the recovered owner predicts the
+// account with the WDK Safe 0.3.0 parameters and the network is in
+// ERC6492_NETWORKS (Ethereum, Sepolia, BNB Smart Chain, Optimism, Arbitrum,
+// Polygon, Base, Gnosis and Plasma), the networks for which the DFX API is intended to
+// verify ERC-6492; otherwise, it sends the Safe signature unwrapped, and an API
+// without ERC-6492 support rejects an undeployed Safe and a wrapped signature
+// from a deployed Safe.
+export const ERC6492_NETWORKS = Object.freeze(new Set([
+  'ethereum', 'sepolia', 'binancesmartchain', 'optimism', 'arbitrum', 'polygon',
+  'base', 'gnosis', 'plasma'
+]))
+
+// Chain ids DFX uses for ERC-1271. Haqq is absent: DFX publishes no id for it.
+export const EVM_CHAIN_IDS = Object.freeze({
+  ethereum: 1,
+  sepolia: 11155111,
+  binancesmartchain: 56,
+  optimism: 10,
+  arbitrum: 42161,
+  polygon: 137,
+  base: 8453,
+  gnosis: 100,
+  plasma: 9745,
+  citrea: 4114,
+  citreatestnet: 5115
+})
 
 // Blockchain enum from AssetDetailDto in the DFX Swagger snapshot, 2026-09-24.
 export const BLOCKCHAINS = Object.freeze([
