@@ -10,8 +10,8 @@ unless it says so.
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
   - **This branch:** the lint, unit, integration and coverage rows, recorded in section 1, and the ERC-4337 fork probe
     of section 8, all re-run on 2026-10-20 on Node v26.7.0; on 2026-10-23 the fork probe (11/11 again), the sandbox
-    live matrix and two wallet journeys on Node v26.12.1; on 2026-10-29 the sandbox live matrix again with the Base
-    ERC-4337 case (Node v26.12.1), the coverage row on Node v22.23.4 (section 1) and the real purchase of section 14.
+    live matrix and two wallet journeys on Node v26.12.1; on 2026-10-29 the sandbox and production live matrix with the
+    Base ERC-4337 case (Node v26.12.1), the coverage row on Node v22.23.4 (section 1) and the real purchase of section 14.
   - **2026-09-30, after the fifth review pass:** the 59 mutations of the mutation-probe row of the summary. They were
     not repeated on this branch; the seven ERC-6492 and challenge mutations in that row belong to this branch (2026-10-20). That revision
     includes these library changes made after `27dd624`: one shared
@@ -36,7 +36,7 @@ unless it says so.
   - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the summary rows that name this revision,
     re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
     byte for byte with the repository before the run. Section 11 keeps the earlier run against `ec9b788`.
-    The production live-matrix count is this run; the sandbox count comes from this branch (2026-10-29). A summary row
+    Both live-matrix counts in the summary come from this branch (2026-10-29). A summary row
     that says the script on this branch was not re-run is not this run.
   - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
     on 2026-09-29 the same production order, wallet and DFX account were re-checked with `20ec94d` without a payment
@@ -46,8 +46,8 @@ unless it says so.
   are those of the 2026-09-28 re-run unless a section says otherwise.
 - **Runtime:** Historical runs used Node.js `v22.22.0`. On this branch, lint, unit, integration, coverage and the 2026-10-20 fork probe used Node v26.7.0; the 2026-10-23
   runs (sandbox live matrix, two wallet journeys, fork probe) used Node v26.12.1. On 2026-10-29, `npm ci`, lint, `build:types`,
-  coverage and `npm audit --audit-level=critical` were re-run on Node v22.23.4 (section 1); the sandbox live matrix, the
-  wallet simulator and `e2e/safe-rescue.mjs` of section 14 ran on Node v26.12.1. macOS arm64. The Bare entry point ran on the Bare runtime v1.35.0 (npm package `bare@1.34.1`), see the summary row.
+  coverage and `npm audit --audit-level=critical` were re-run on Node v22.23.4 (section 1); the sandbox and production
+  live matrix, the wallet simulator and `e2e/safe-rescue.mjs` of section 14 ran on Node v26.12.1. macOS arm64. The Bare entry point ran on the Bare runtime v1.35.0 (npm package `bare@1.34.1`), see the summary row.
 - **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.17
   (a single copy, also used by `@tetherto/wdk-wallet-evm`; 1.0.0-beta.19 before 2026-10-02)
   and `@tetherto/wdk-wallet-evm` 1.0.0-beta.19.
@@ -70,7 +70,7 @@ unless it says so.
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected on 2026-09-30, each by 1–233 tests; not repeated on this branch. 7/7 mutations of the ERC-6492 wrapper and the challenge check detected on 2026-10-20 |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures on `20ec94d`. The script on this branch was not re-run |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 178/186 steps on this branch (2026-10-29, with the Base ERC-4337 case); all 8 failures come from the two assets the sandbox does not list as buyable (section 2). Polygon and Base ERC-4337 pass every step |
-| Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 175/179 steps on `20ec94d`; the 4 failures are a DFX data issue (section 2). The script on this branch was not re-run |
+| Live matrix, production | `cd e2e && DFX_ENV=production node live-matrix.mjs` | 182/187 steps on this branch (2026-10-29); every chain except Bitcoin signs in, including the undeployed Polygon and Base ERC-4337 account; the 5 failures are all Sepolia, a testnet asset in the production catalog (section 2) |
 | Widget as the user sees it | `cd e2e && node widget-check.mjs` | On `20ec94d`, the widget opens signed in, amount/asset/network prefilled, in sandbox and production. The script on this branch was not re-run |
 | Wallet user journeys | `cd e2e && node wallet-journeys.mjs` | `eth-4337-buy-usdt` and `eth-eoa-buy-usdt` passed on this branch (2026-10-23); the other five journeys were not re-run. The script expects Bitcoin to stay unlisted and every other journey, the undeployed ERC-4337 Safe included, to reach the DFX page title (`Buy`/`Sell`), return and show an order status. The Solana journey fails when its random address starts with `1` or `3`, about 6 % (DFX backend issue, section 12) |
 | After the widget (local full stack) | `cd e2e && node fullstack.mjs` | 29/29 steps on `20ec94d` (second run; the first stopped at a transient local `fetch failed`, section 12). The script on this branch was not re-run |
@@ -167,10 +167,19 @@ were tightened counted 180/186.
 **Sandbox on this branch: 165/171 (2026-10-23), before `base-4337` was added.** The undeployed Polygon ERC-4337 account now runs the same steps
 as the other chains and passes all of them: it signs in, and the `buy()` and `sell()` sessions return 200 at `/v2/user`
 with the Safe address in the `/v2/user` response body (a substring check, not a comparison of the address field). With the expected address replaced by another one, those two session steps fail
-(13/15 for that chain). The 6 failures are the expected ones below. Production was not run for this change.
+(13/15 for that chain). The 6 failures are the expected ones below. Production was not run on 2026-10-23; the
+production run of this branch is the 2026-10-29 one below.
 
 **Sandbox: 172/178 (`20ec94d`).** The 6 failures are purchases of Sepolia USDT and Spark BTC, which the sandbox lists as
 `sellable` but not `buyable`. The module rejects them with `ValueError`, which is the intended behaviour.
+
+**Production on this branch: 182/187 (2026-10-29, Node v26.12.1).** Every chain except Bitcoin signs in to production
+DFX with the exact challenge check and gets valid widget sessions at `/v2/user`, including the undeployed ERC-4337 account
+on Polygon and on Base. Bitcoin has no listed asset (API `decimals: null`), so the module rejects its quotes and trades
+before any sign-in; no production sign-in of a Bitcoin address was made. The 5 failures are all Sepolia: production
+lists Sepolia/USDT as sellable but not buyable, so `quoteBuy`, `buy`, the foreign-recipient step and the
+`externalTransactionId` step stop at `Unsupported buy asset or network: USDT`, and its sell quote fails upstream with
+`Base fee is missing`. The Sepolia sell session is valid.
 
 **Production: 175/179 (`20ec94d`).** In that run, every mainnet chain signs in and produces valid widget sessions. The 4 failures are all
 Sepolia. Production lists the testnet asset Sepolia/USDT as sellable, and its sell quote fails upstream with
@@ -180,7 +189,7 @@ Sepolia. Production lists the testnet asset Sepolia/USDT as sellable, and its se
 The widget session belonged to the owner EOA, so DFX delivered to that address and not to the smart account. The test
 confirmed that a smart-account address passed as `recipient` was rejected with a message naming the owner address.
 
-**Production side effect.** Signing in creates a DFX user per address. The production run created these throwaway
+**Production side effect.** Signing in creates a DFX user per address. The run on `20ec94d` created these throwaway
 test users, none with KYC or funds:
 
 | Account | Address |
@@ -191,8 +200,16 @@ test users, none with KYC or funds:
 | Bitcoin | `bc1q7aqevm93a9urcaqqzgq7s2d5zeneknye7vu5zd` |
 | Spark | `spark1pgssxuy4rn42lfmj57g4hp5sdxx4qfp8ddy4fp2044swrh8jnd6nlt6f03yxna` |
 
-The production run used the same script before it moved into `e2e/`; it was not repeated from the repository to
-avoid creating further production users.
+That run used the same script before it moved into `e2e/`. The run of 2026-10-29 from this branch, started on
+purpose, created these further throwaway users, none with KYC or funds (Bitcoin did not sign in):
+
+| Account | Address |
+| --- | --- |
+| EVM (also the owner of the ERC-4337 account) | `0x96b47527B49a08CeA368ed17F300B46a406F55b9` |
+| ERC-4337 account (Polygon and Base) | `0xc79777B64B7aE1361D25aBf5f1e18C14A32B29E8` |
+| Tron | `TYokU9QHCBqpaDkxZaarcXS3PxqmvtgBsB` |
+| Solana | `4s4aFwxCfmvLLKYAHozxYXZkunpUxttpV4TScgnJvNMd` |
+| Spark | `spark1pgssxxcgwl0q72sy2x6vzfjfjcjk0s5tk8m246zssrcw5pemdkxalznx8xw8t5` |
 
 ## 3. What the user sees
 
