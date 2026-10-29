@@ -33,7 +33,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Wrap a Safe EIP-712 sign-in signature as ERC-6492 when the recovered owner
   predicts the account with the WDK Safe 0.3.0 init parameters. An undeployed
-  Safe can sign in once the DFX API verifies ERC-6492. A failed self-check,
+  Safe can sign in; the DFX API verifies ERC-6492 since 2026-10-23. A failed self-check,
   including `onChainIdentifier` or another abstractionkit configuration, sends
   the unwrapped Safe signature. The module wraps Safe signatures only on networks
   in `ERC6492_NETWORKS` (Ethereum, Sepolia, BNB Smart Chain, Optimism, Arbitrum,

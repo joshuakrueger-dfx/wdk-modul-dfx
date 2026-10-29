@@ -357,8 +357,8 @@ same fallback.
   Polygon, Base, Gnosis and Plasma), for which the DFX API is intended to verify
   ERC-6492; an API without ERC-6492 support rejects an undeployed Safe and a
   wrapped signature from a deployed Safe. A Safe that is not deployed yet can
-  sign in once the DFX API verifies ERC-6492; a deployed Safe is still checked
-  with ERC-1271.
+  sign in, because the DFX API verifies ERC-6492 since 2026-10-23; a deployed
+  Safe is still checked with ERC-1271.
   If the prediction does not match — a wallet `onChainIdentifier`, or another
   abstractionkit version — the module sends the Safe signature unwrapped. A
   deployed Safe can still pass ERC-1271. A Safe with no code is rejected.

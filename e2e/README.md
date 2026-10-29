@@ -371,8 +371,8 @@ signature. Each sign-in records `sandbox` as `rejected` or `accepted`.
 Wallet packages can include their own `@tetherto/wdk-wallet` copy; the probe's
 initial resolution check compares only the copies used by DFX and WDK.
 `rejected` is a `ProviderError` with reason `UNAUTHORIZED`. `accepted` is a
-widget URL that contains a session. The sandbox can accept a Safe that is not
-deployed on the fork once the DFX API verifies ERC-6492 on Polygon. It needs
+widget URL that contains a session. The sandbox accepts a Safe that is not
+deployed on the fork, because the DFX API verifies ERC-6492 since 2026-10-23. It needs
 `anvil` on `PATH`;
 `ANVIL_PORT` defaults to 8547. `ANVIL_FORK_URL` selects the upstream Polygon RPC
 and defaults to `https://polygon-bor-rpc.publicnode.com`. Only valid `https:` URLs
