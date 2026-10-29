@@ -29,6 +29,7 @@ const CASES = [
   { chain: 'bsc', Manager: WalletManagerEvm, cfg: { provider: 'https://bsc-rpc.publicnode.com' }, network: 'binancesmartchain' },
   { chain: 'sepolia', Manager: WalletManagerEvm, cfg: { provider: 'https://ethereum-sepolia-rpc.publicnode.com' }, network: 'sepolia' },
   { chain: 'polygon-4337', Manager: WalletManagerEvmErc4337, cfg: { chainId: 137, provider: 'https://polygon-bor-rpc.publicnode.com', bundlerUrl: 'https://bundler.invalid', safeModulesVersion: '0.3.0', useNativeCoins: true }, network: 'polygon' },
+  { chain: 'base-4337', Manager: WalletManagerEvmErc4337, cfg: { chainId: 8453, provider: 'https://base-rpc.publicnode.com', bundlerUrl: 'https://bundler.invalid', safeModulesVersion: '0.3.0', useNativeCoins: true }, network: 'base' },
   { chain: 'tron', Manager: WalletManagerTron, cfg: { provider: 'https://api.trongrid.io' }, network: 'tron' },
   { chain: 'solana', Manager: WalletManagerSolana, cfg: { provider: 'https://api.mainnet-beta.solana.com' }, network: 'solana' },
   { chain: 'bitcoin', Manager: WalletManagerBtc, cfg: { network: 'bitcoin', bip: 84 }, network: 'bitcoin' },
@@ -53,7 +54,7 @@ const TOKENS = {
 const NATIVE = {
   ethereum: ['ETH', 18], polygon: ['POL', 18], arbitrum: ['ETH', 18],
   base: ['ETH', 18], optimism: ['ETH', 18], bsc: ['BNB', 18],
-  sepolia: ['ETH', 18], 'polygon-4337': ['POL', 18], tron: ['TRX', 6], solana: ['SOL', 9]
+  sepolia: ['ETH', 18], 'polygon-4337': ['POL', 18], 'base-4337': ['ETH', 18], tron: ['TRX', 6], solana: ['SOL', 9]
 }
 async function preparedSeed () {
   let file
@@ -104,7 +105,7 @@ async function saveOrder (order) {
   savedOrders = rows
 }
 const origins = new Set([`http://localhost:${port}`, `http://127.0.0.1:${port}`])
-const names = { ethereum: 'Ethereum', polygon: 'Polygon', arbitrum: 'Arbitrum', base: 'Base', optimism: 'Optimism', bsc: 'BNB Smart Chain', sepolia: 'Sepolia', 'polygon-4337': 'Polygon Smart Account', tron: 'Tron', solana: 'Solana', bitcoin: 'Bitcoin', spark: 'Spark' }
+const names = { ethereum: 'Ethereum', polygon: 'Polygon', arbitrum: 'Arbitrum', base: 'Base', optimism: 'Optimism', bsc: 'BNB Smart Chain', sepolia: 'Sepolia', 'polygon-4337': 'Polygon Smart Account', 'base-4337': 'Base Smart Account', tron: 'Tron', solana: 'Solana', bitcoin: 'Bitcoin', spark: 'Spark' }
 let session
 const calls = []
 class WalletInputError extends Error {}

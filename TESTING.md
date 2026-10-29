@@ -37,11 +37,14 @@ unless it says so.
     that says the script on this branch was not re-run is not this run.
   - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
     on 2026-09-29 the same production order, wallet and DFX account were re-checked with `20ec94d` without a payment
-    (section 12).
+    (section 12). A second real purchase, into an undeployed ERC-4337 account on Base, was paid on 2026-10-29 with this
+    branch (section 14).
 - **First runs:** 2026-09-24 (sections 1–5) and 2026-09-25 (sections 6–8) against `0be1b6d`; the numbers in this document
   are those of the 2026-09-28 re-run unless a section says otherwise.
 - **Runtime:** Historical runs used Node.js `v22.22.0`. On this branch, lint, unit, integration, coverage and the 2026-10-20 fork probe used Node v26.7.0; the 2026-10-23
-  runs (sandbox live matrix, two wallet journeys, fork probe) used Node v26.12.1. macOS arm64. The Bare entry point ran on the Bare runtime v1.35.0 (npm package `bare@1.34.1`), see the summary row.
+  runs (sandbox live matrix, two wallet journeys, fork probe) used Node v26.12.1. On 2026-10-29, `npm ci`, lint, `build:types`,
+  coverage and `npm audit --audit-level=critical` were re-run on Node v22.23.4 (section 1); the wallet simulator and
+  `e2e/safe-rescue.mjs` of section 14 ran on Node v26.12.1. macOS arm64. The Bare entry point ran on the Bare runtime v1.35.0 (npm package `bare@1.34.1`), see the summary row.
 - **WDK packages used by `tests/integration`:** root-lockfile versions `@tetherto/wdk-wallet` 1.0.0-beta.17
   (a single copy, also used by `@tetherto/wdk-wallet-evm`; 1.0.0-beta.19 before 2026-10-02)
   and `@tetherto/wdk-wallet-evm` 1.0.0-beta.19.
@@ -60,7 +63,7 @@ unless it says so.
 | --- | --- | --- |
 | Integration, local | `npm run test:integration` | 35/35 tests in 1 suite against a local DFX server replaying recorded sandbox responses; no network |
 | Unit tests | `npm run lint && npm test` | lint output empty; 711/711 tests in 2 suites |
-| Coverage (unit + integration) | `npm run test:coverage` | 746/746 tests in 3 suites on Node v26.7.0; 100 % statements, branches, functions, lines |
+| Coverage (unit + integration) | `npm run test:coverage` | 746/746 tests in 3 suites on Node v26.7.0 and again on Node v22.23.4 (2026-10-29); 100 % statements, branches, functions, lines |
 | Mutation probes | ad-hoc script (see [Mutation probes](#mutation-probes)) | 59/59 mutations detected on 2026-09-30, each by 1–233 tests; not repeated on this branch. 7/7 mutations of the ERC-6492 wrapper and the challenge check detected on 2026-10-20 |
 | Signature normalisation vs. reference libraries | `cd e2e && node signature-diff.mjs` | 0 mismatches in 20 000 Solana and 5 000 Spark signatures on `20ec94d`. The script on this branch was not re-run |
 | Live matrix, sandbox | `cd e2e && DFX_ENV=sandbox node live-matrix.mjs` | 165/171 steps on this branch (2026-10-23); the 6 failures are the same expected ones (section 2). Polygon ERC-4337 passes every step |
@@ -74,6 +77,7 @@ unless it says so.
 | KYC in the widget | `cd e2e && node kyc-widget.mjs` | On `20ec94d`: e-mail code → level 10 → personal data → level 20 → nationality → stops at the Sumsub identification call. The script on this branch was not re-run |
 | Bare entry point | `cd e2e && npx --yes bare@1.34.1 bare-smoke.mjs` | 4/4 checks on this branch (2026-10-20, Bare runtime v1.35.0): `bare.js` loads `DfxProtocol`, and a sandbox sign-in on Polygon through stubbed `fetch` posts the predicted Safe address with exactly the ERC-6492 signature in `e2e/fixtures/bare-smoke-expected.json`, then the stubbed detail request answers 404. With one hex digit of that fixture changed the probe reports 3/4. No network, no DFX API |
 | Deployed ERC-4337 account | `cd e2e && ANVIL_FORK_URL=https://polygon.drpc.org node safe-deployed.mjs` | 11/11 steps on this branch (2026-10-20): before deployment the posted signature is ERC-6492-wrapped and viem 2.38.5 verifies it on the fork while the Safe has no code; after deployment the inner signature passes ERC-1271 and the wrapped one passes viem; sandbox result `accepted` in all three sign-ins on 2026-10-23, `rejected` on 2026-10-20 (section 8) |
+| Real purchase into an undeployed ERC-4337 account | wallet simulator in production; `cd e2e && node safe-rescue.mjs --native …` | On this branch (2026-10-29): 15 EUR of ETH bought for the Base smart account, which signed in to production DFX while it had no code; DFX paid 0.00565071 ETH to it and the module reports `completed`; the owner then deployed it without a bundler and moved the full balance out (section 14) |
 | Reviews | independent code review; Tether's `wdk-review-jsdocs`, `wdk-review-dts`, `wdk-review-tests` | see [section 10](#10-reviews-2026-09-28): all findings fixed or named; fifth pass of all skills on `498d4e6` (2026-09-30) |
 
 See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before running anything under `e2e/`.
@@ -82,7 +86,11 @@ See [`e2e/README.md`](e2e/README.md) for prerequisites and side effects before r
 
 On this branch (2026-10-20), `npm run lint` printed nothing and `npm test` passed 711 tests in 2 suites (Node v26.7.0).
 `npm run test:integration` passed 35 tests in 1 suite on that same Node version.
-`npm run test:coverage` on that same Node version passed 746 tests in 3 suites and reached 100 % coverage in all four categories. The
+`npm run test:coverage` on that same Node version passed 746 tests in 3 suites and reached 100 % coverage in all four categories.
+On 2026-10-29, the jobs that the target repository's `CONTRIBUTING.md` lists were re-run on Node v22.23.4: `npm ci`, `npm run lint`
+(output empty), `npm run build:types` (exit 0), `npm run test:coverage` (746/746 in 3 suites, 100 % in all four categories) and
+`npm audit --audit-level=critical` (exit 0, 6 low-severity findings). `npm run build:types` rewrites the hand-written
+declarations under `types/`; it does the same on `main`, so the committed `types/` were restored after the run. The
 session scenarios that build state across successive public calls live in the integration suite
 (skill rule R3). Parallel calls to the same method within one Act belong in unit tests. All
 unit tests use an injected `fetch` routed by method and URL and cover
@@ -495,7 +503,11 @@ Production uses the same code; it was not tested there. The module cannot work a
   the identification call, and the lifecycle test simulates a completed identification. In the real purchase
   (section 9) the account was already verified.
 - **Real sell.** Only a real buy was made (section 9). Selling with real crypto was not tested.
-- **USDC with real money.** The real purchase was ETH. USDC is covered by quotes and widget tests only.
+- **USDC with real money.** Both real purchases were ETH (sections 9 and 14). USDC is covered by quotes and widget
+  tests only; `e2e/safe-rescue.mjs` moved USDC out of a Safe only on a fork.
+- **Sending from an ERC-4337 account through WDK.** The funds of section 14 were moved by two ordinary owner
+  transactions without a bundler. WDK's own UserOperation path (bundler, paymaster or the Safe paying its own gas) was
+  not exercised.
 - **Deposit detection on a real chain.** The sale in the local tests starts from a deposit row as the blockchain scan
   would write it; the scan itself is not exercised.
 - **Drift between the recorded sandbox and the live API.** The integration fixtures are a snapshot of
@@ -514,3 +526,57 @@ Bitcoin/BTC, Lightning/BTC and Arkade/BTC are excluded from the recorded sandbox
 catalog and rejected by trade methods while their API rows carry `decimals: null`;
 sandbox Firo/FIRO remains listed with API `decimals: 8`. In the production catalog recorded on 2026-10-02 (`b5cafa1`), production
 returned null for all four. Production was not fetched again on this branch. An API value, including zero, remains authoritative.
+
+## 14. Real purchase into an undeployed ERC-4337 account (production, 2026-10-29)
+
+A real buy was made from the wallet simulator running against **production** (`WALLET_SIM_ENV=production`) with the
+prepared wallet of section 9 and the `base-4337` account (WDK Safe on Base, chain id 8453) on this branch. The
+account had no code when it signed in, ordered and received the payout.
+
+- **Owner:** `0x463e558CC8842078CD1FeC6dF1Ff7F54058BE6C7` (the address of section 9).
+- **Smart account:** `0xfC4081f16078d3b9f44148Dc4003d6a4F25ED68f`, `eth_getCode` empty until the deployment below.
+
+The user flow in the wallet: *Kaufen* → ETH · Base Smart Account, 15 EUR → *Weiter zu DFX*. The DFX steps in the
+widget, including the bank transfer, were completed by hand; how the new address was verified at DFX was not
+recorded.
+
+The module calls were recorded by polling the simulator's call log (`/api/log`: method, chain, duration, result)
+and its order list every 3 s, writing a line whenever either changed:
+[`e2e/evidence/2026-10-29-production-module-calls.jsonl`](e2e/evidence/2026-10-29-production-module-calls.jsonl). Its
+first line after the restart (08:35:46, `Wallet erstellen`) was a check of the simulator through its API, not the
+user's click. Times are UTC.
+
+| Time (UTC) | Source | Event | Smart-account balance |
+| --- | --- | --- | --- |
+| 09:41:37 | module call log | `buy` on `base-4337` succeeded (1312 ms): sign-in as the undeployed account, order `wallet-1793266896096-6c54e1f70ddf` | 0 ETH |
+| 09:43:41 | Base block 53238837 | payout [`0x62b9791994216f2aea099dd4f2bf3cb5a064c3864e76dcd948d786d90602bde8`](https://basescan.org/tx/0x62b9791994216f2aea099dd4f2bf3cb5a064c3864e76dcd948d786d90602bde8), 0.00565071 ETH from `0xFAEefD557ffD2714f16e1A44A165FCd5d6a6b6a0` (the payout address of section 9) | **0.00565071 ETH** |
+| 09:59:48 | module call log | `getTransactionDetail` on `base-4337` succeeded; the order list shows `completed` | 0.00565071 ETH |
+
+The same log also holds an order from the EOA account on Base (09:34:15, 15 EUR of ETH) that was not paid and stays
+`started`, and two `quoteBuy` calls that returned an error; the call log keeps no error reason.
+
+**Moving the funds out.** The simulator does not send, and no bundler was configured. `e2e/safe-rescue.mjs` (see
+[`e2e/README.md`](e2e/README.md)) lets the owner deploy the account through the Safe proxy factory with the factory
+data WDK predicts, then call `execTransaction` with a pre-validated owner signature. Before that, the same call
+sequence ran on `anvil` forks of Base while the account was still undeployed: once with 20 USDC set into the account
+by storage write (2026-10-26) and once with its real 0.00565071 ETH (2026-10-29); both exited 0 with the account at 0
+and the destination credited in full. After the real deployment, the USDC path passed again on a fork of the deployed
+account (exit 0). On Base itself the owner held 0.00005 ETH for gas:
+
+| Time (UTC) | Base block | Transaction | Result |
+| --- | --- | --- | --- |
+| 10:20:43 | 53239948 | [`0x30d9665e9f8d30016b5ef359751737a7ab77e350db474c5f68db0f3f57e535a2`](https://basescan.org/tx/0x30d9665e9f8d30016b5ef359751737a7ab77e350db474c5f68db0f3f57e535a2), owner → factory `0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67` | status 1; the account has code (171 bytes) |
+| 10:20:49 | 53239951 | [`0x4b254a8c7ea187160281b1fe9cc1156865a6b15ffab36a0de2ed8e9d4047a278`](https://basescan.org/tx/0x4b254a8c7ea187160281b1fe9cc1156865a6b15ffab36a0de2ed8e9d4047a278), owner → account `execTransaction` | status 1; 0.00565071 ETH to `0x3e0004935eAD42cefB1ecf461847bdB1591f337f`, account balance 0 |
+
+Both transactions together cost the owner 0.000002231746606711 ETH, of which 0.000000001492606711 ETH was the
+L1 data fee reported in the receipts; the owner's balance fell by exactly that amount. Balances were re-read from
+the chain after the script finished.
+
+**Sandbox, 2026-10-26.** The same simulator against the sandbox, with a new wallet, recorded the catalog and quotes up
+to `quoteBuy` on `base-4337`; no order was placed:
+[`e2e/evidence/2026-10-26-sandbox-module-calls.jsonl`](e2e/evidence/2026-10-26-sandbox-module-calls.jsonl). The
+`base-4337` case of `e2e/live-matrix.mjs` passed 15/15 steps in the sandbox on 2026-10-23 and 2026-10-26.
+
+This is the first run in which an undeployed ERC-4337 account went through every step with real money: sign-in to
+production DFX via ERC-6492, widget, bank transfer, on-chain payout, status through the module, and recovery of the
+funds with the owner key alone.
