@@ -8,7 +8,8 @@ unless it says so.
 - **Which code each result belongs to.** Results belong to the explicitly named revisions:
   - **This branch:** the lint, unit, integration and coverage rows, recorded in section 1, and the ERC-4337 fork probe
     of section 8, all re-run on 2026-10-20 on Node v26.7.0; on 2026-10-23 the fork probe (11/11 again), the sandbox
-    live matrix and two wallet journeys on Node v26.12.1.
+    live matrix and two wallet journeys on Node v26.12.1; on 2026-10-29 the sandbox live matrix again with the Base
+    ERC-4337 case (Node v26.12.1), the coverage row on Node v22.23.4 (section 1) and the real purchase of section 14.
   - **2026-09-30, after the fifth review pass:** the 59 mutations of the mutation-probe row of the summary. They were
     not repeated on this branch; the seven ERC-6492 and challenge mutations in that row belong to this branch (2026-10-20). That revision
     includes these library changes made after `27dd624`: one shared
@@ -33,7 +34,7 @@ unless it says so.
   - **Library code `20ec94d` (2026-09-29):** the e2e probes of section 12 and the summary rows that name this revision,
     re-run after all review changes. They consumed a packed copy of the module whose `src/` and `index.js` were compared
     byte for byte with the repository before the run. Section 11 keeps the earlier run against `ec9b788`.
-    The production live-matrix count is this run; the sandbox count comes from this branch (2026-10-23). A summary row
+    The production live-matrix count is this run; the sandbox count comes from this branch (2026-10-29). A summary row
     that says the script on this branch was not re-run is not this run.
   - **Real purchase:** paid on 2026-09-28 with library code `0be1b6d` (section 9). The payment itself was not repeated;
     on 2026-09-29 the same production order, wallet and DFX account were re-checked with `20ec94d` without a payment
