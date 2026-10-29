@@ -401,7 +401,9 @@ transactions; the smart account pays nothing.
 Before any transaction, the script checks the chain id, that the WDK account
 address equals the address predicted from WDK's own Safe parameters, and that
 `--to` is neither the account nor its owner. It reads the seed from
-`WALLET_SIM_SEED_FILE` or `~/.wdk-dfx-real/seed.txt` and never prints it.
+`WALLET_SIM_SEED_FILE` or `~/.wdk-dfx-real/seed.txt` and never prints it. The
+seed file must meet the same rule as for the simulator: a nonempty regular file,
+owned by the current user, owner-only permissions, not a symlink.
 
 - Without `--send` it is a dry run: addresses, balances, gas and cost estimates.
 - `--native` moves ETH; otherwise it moves the token given by `--token`
@@ -413,8 +415,9 @@ address equals the address predicted from WDK's own Safe parameters, and that
   balance by storage write, or its ETH balance with `--native`.
 - `--priority-fee-gwei` overrides the RPC's priority fee. `anvil` suggests
   1 gwei, while Base suggests far less.
-- It stops before sending if the owner holds less than twice the estimated
-  maximum cost. After sending, it checks that the account is empty and the
+- It stops before any transaction, including the deployment, if the account
+  holds none of the selected asset, or if the owner holds less than twice the
+  estimated maximum cost. After sending, it checks that the account is empty and the
   destination received the full balance. It also checks that the owner paid at
   least the receipt costs, including any reported L1 data fee.
 

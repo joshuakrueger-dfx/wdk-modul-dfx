@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import {
   AbiCoder,
@@ -96,6 +97,22 @@ function parseArgs (args) {
   return options
 }
 
+async function readSeedFile (path) {
+  let file
+  try {
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) throw new Error()
+    const seed = (await file.readFile('utf8')).trim()
+    if (!seed) throw new Error()
+    return seed
+  } catch {
+    throw new Error('Seed file must be a non-empty regular file owned by the current user with owner-only permissions (for example 0600), and must not be a symlink.')
+  } finally {
+    if (file) await file.close().catch(() => {})
+  }
+}
+
 function maskSensitiveText (value, seed) {
   let message = String(value ?? 'Unknown error')
   if (seed) message = message.split(seed).join('[REDACTED SEED]')
@@ -133,8 +150,7 @@ async function main () {
     if (chainId !== CHAIN_ID) throw new Error(`RPC chain id is ${chainId}; expected ${CHAIN_ID}`)
 
     const seedFile = process.env.WALLET_SIM_SEED_FILE || DEFAULT_SEED_FILE
-    seed = (await readFile(seedFile, 'utf8')).trim()
-    if (!seed) throw new Error('The configured seed file is empty')
+    seed = await readSeedFile(seedFile)
 
     const ownerManager = new WalletManagerEvm(seed, { provider: options.rpc })
     const ownerAccount = await ownerManager.getAccount(0)
@@ -187,6 +203,9 @@ async function main () {
 
     const balance = await readBalance(safe)
     const destinationBalanceBefore = await readBalance(options.to)
+    if (balance === 0n && options.send) {
+      throw new Error(`Safe ${options.native ? 'ETH' : 'token'} balance is zero; refusing to send or deploy`)
+    }
     const ownerEthBefore = await provider.getBalance(owner)
     const block = await provider.getBlock('latest')
     if (block?.baseFeePerGas == null) throw new Error('Latest block does not provide baseFeePerGas')
@@ -220,6 +239,7 @@ async function main () {
     console.log(options.native ? 'Asset: native ETH' : `Token: ${options.token}`)
     console.log(`Safe ${options.native ? 'ETH' : 'token'} balance: ${formatUnits(balance, decimals)}`)
     console.log(`Destination ${options.native ? 'ETH' : 'token'} balance: ${formatUnits(destinationBalanceBefore, decimals)}`)
+    if (balance === 0n) console.log(`No ${options.native ? 'ETH' : 'token'} balance to recover; --send would stop before any transaction.`)
     console.log(`Owner ETH balance: ${formatEther(ownerEthBefore)}`)
     console.log(`Estimated deployment gas: ${deployed ? 'not needed (already deployed)' : deployGas}`)
     console.log(`Estimated transfer gas: ${deployed ? transferGas : `approximately ${transferGas} (Safe is undeployed; conservative allowance)`}`)
