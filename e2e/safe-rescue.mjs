@@ -83,6 +83,10 @@ function parseArgs (args) {
   if (!isAddress(options.to)) throw new Error('--to must be a valid EVM address')
   if (!isAddress(options.token)) throw new Error('--token must be a valid EVM address')
   options.to = getAddress(options.to)
+  if (options.to === ZeroAddress) throw new Error('--to cannot be the zero address')
+  if (!options.native && options.to === getAddress(options.token)) {
+    throw new Error('--to cannot be the token contract address')
+  }
   options.token = getAddress(options.token)
   if (options.native && options.tokenProvided) throw new Error('--native cannot be used together with --token')
   options.local = ['127.0.0.1', 'localhost'].includes(new URL(options.rpc).hostname.toLowerCase())

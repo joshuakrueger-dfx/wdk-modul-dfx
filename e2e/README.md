@@ -400,7 +400,8 @@ transactions; the smart account pays nothing.
 
 Before any transaction, the script checks the chain id, that the WDK account
 address equals the address predicted from WDK's own Safe parameters, and that
-`--to` is neither the account nor its owner. It reads the seed from
+`--to` is neither the account, its owner nor the zero address, and for a token
+not the token contract. It reads the seed from
 `WALLET_SIM_SEED_FILE` or `~/.wdk-dfx-real/seed.txt` and never prints it. The
 seed file must meet the same rule as for the simulator: a nonempty regular file,
 owned by the current user, owner-only permissions, not a symlink.

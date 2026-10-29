@@ -28,7 +28,9 @@ WDK does not call it, and another public method would go through the policy
 engine. The module signs only the expected DFX sign-in challenge.
 
 The current prerelease line is `1.0.0-beta.1`. Runtime verification results and their
-tested revisions are recorded in [TESTING.md](TESTING.md); a dependency audit is
-pending before release. Report defects against this line; fixes will be
+tested revisions are recorded in [TESTING.md](TESTING.md). `npm audit
+--audit-level=critical` passes (TESTING.md section 1); its six low-severity
+findings have not been assessed, so a dependency audit is still pending before
+release. Report defects against this line; fixes will be
 documented in the changelog. DFX API and hosted widget behavior are external to
 this package and require separate integration verification.
